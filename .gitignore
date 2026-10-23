@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+.runtime/
+
+# 登录态与本地配置（含 cookie / 设备指纹，绝不入库）
+.profile/
+.profile-*/
+config.local.json
+
+# 运行产物
+out/
+
+# 日志
+*.log
+npm-debug.log*
+
+# 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

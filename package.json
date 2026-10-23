@@ -1,0 +1,43 @@
+{
+  "name": "yuketang-brush",
+  "version": "0.4.0",
+  "description": "雨课堂课程视频进度批处理工具：双击即用，扫码登录，自动抓取课程参数，实时进度，节点级日志",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "bin": {
+    "yuketang-brush": "src/brush.mjs",
+    "yuketang-setup": "src/setup.mjs"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "docs",
+    "启动.bat",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "menu": "node src/menu.mjs",
+    "setup": "node src/setup.mjs",
+    "brush": "node src/brush.mjs",
+    "dry": "node src/brush.mjs --dry",
+    "verify": "node src/verify.mjs",
+    "logstat": "node src/logstat.mjs",
+    "login": "node src/login.mjs",
+    "doctor": "node src/doctor.mjs"
+  },
+  "keywords": [
+    "yuketang",
+    "雨课堂",
+    "xuetangx",
+    "courseware",
+    "automation",
+    "playwright"
+  ],
+  "dependencies": {
+    "playwright": "^1.56.0"
+  }
+}
