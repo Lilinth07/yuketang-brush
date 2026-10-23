@@ -329,10 +329,12 @@ const entry = {
   discoveredAt: new Date().toISOString(),
 };
 
-const idx = cfg.courses.findIndex((c) => c.classroomId === entry.classroomId);
-if (idx >= 0) cfg.courses[idx] = { ...cfg.courses[idx], ...entry };
-else cfg.courses.push(entry);
+const idx = cfg.courses.findIndex((c) => Number(c.classroomId) === entry.classroomId);
+const isNew = idx < 0;
+cfg.courses = isNew ? [...cfg.courses, entry] : cfg.courses.map((c, i) => (i === idx ? { ...c, ...entry } : c));
 
+// 关键：把刚配置的这门课设为「当前课程」，否则菜单和 brush 仍会用旧课程
+cfg.active = entry.classroomId;
 cfg.profileDir = path.relative(ROOT, CFG.userDataDir) || '.profile';
 cfg.channel = CFG.channel;
 saveConfig(cfg);
@@ -342,6 +344,7 @@ await ctx.close();
 say('\n' + color.green('━━ 初始化完成 ━━'));
 say(`  课程      ${entry.name}`);
 say(`  节点      视频 ${entry.videoCount} 个 / 共 ${found.chapters} 个`);
+say(`  状态      ${color.green('已设为当前课程')}`);
 say(`  登录态    ${cookies.length} 条 cookie`);
 say(`  配置      ${path.relative(ROOT, CONFIG_FILE)}`);
 say(`  账号      ${me.name} (${me.uid})`);

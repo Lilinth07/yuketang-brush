@@ -45,13 +45,18 @@ export const CFG = {
 
 /* ═════════ 本地配置（不入库） ═════════ */
 
-const EMPTY = { version: 1, profileDir: '.profile', channel: 'msedge', courses: [] };
+const EMPTY = { version: 1, profileDir: '.profile', channel: 'msedge', active: null, courses: [] };
 
 export function loadConfig() {
   if (!fs.existsSync(CONFIG_FILE)) return { ...EMPTY };
   try {
     const c = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-    return { ...EMPTY, ...c, courses: Array.isArray(c.courses) ? c.courses : [] };
+    return {
+      ...EMPTY,
+      ...c,
+      active: c.active ?? null,
+      courses: Array.isArray(c.courses) ? c.courses : [],
+    };
   } catch (e) {
     throw new Error(`config.local.json 解析失败：${e.message}`);
   }
@@ -65,6 +70,42 @@ export function saveConfig(cfg) {
 export function hasConfig() {
   const c = loadConfig();
   return c.courses.some((x) => x.courseId && x.cc && x.lmsUserId);
+}
+
+/** 当前选中的课程：active 命中就用它，否则退回第一门 */
+export function getActiveCourse(cfg) {
+  const c = cfg || loadConfig();
+  const list = c.courses || [];
+  if (!list.length) return null;
+  return list.find((x) => Number(x.classroomId) === Number(c.active)) || list[0];
+}
+
+export function setActiveCourse(classroomId) {
+  const cfg = loadConfig();
+  cfg.active = Number(classroomId);
+  saveConfig(cfg);
+  return cfg;
+}
+
+export function removeCourse(classroomId) {
+  const cfg = loadConfig();
+  const id = Number(classroomId);
+  cfg.courses = cfg.courses.filter((c) => Number(c.classroomId) !== id);
+  if (Number(cfg.active) === id) cfg.active = cfg.courses[0]?.classroomId ?? null;
+  saveConfig(cfg);
+  return cfg;
+}
+
+/** 新增或更新一门课，并把它设为当前课程 */
+export function upsertCourse(entry) {
+  const cfg = loadConfig();
+  const id = Number(entry.classroomId);
+  const idx = cfg.courses.findIndex((c) => Number(c.classroomId) === id);
+  if (idx >= 0) cfg.courses[idx] = { ...cfg.courses[idx], ...entry };
+  else cfg.courses.push(entry);
+  cfg.active = id;
+  saveConfig(cfg);
+  return cfg;
 }
 
 /* ═════════ 课程 URL 解析 ═════════ */
@@ -98,7 +139,7 @@ export function parseCourseUrl(raw) {
 
 /**
  * 解析出一次运行要用的课程参数。
- * 优先级：--course <url|序号> > 环境变量 COURSE_URL > 配置里第一门课
+ * 优先级：--course <url|序号> > 环境变量 COURSE_URL > 当前选中的课程（active）> 第一门课
  */
 export function resolveCourse({ course, url } = {}) {
   const cfg = loadConfig();
@@ -134,12 +175,12 @@ export function resolveCourse({ course, url } = {}) {
   if (!list.length) {
     throw new Error('还没有配置任何课程。先运行：npm run setup');
   }
-  const first = list[0];
-  const miss = need.filter((k) => !first[k]);
+  const current = getActiveCourse(cfg);
+  const miss = need.filter((k) => !current[k]);
   if (miss.length) {
-    throw new Error(`课程配置不完整（缺 ${miss.join(', ')}）。重新运行：npm run setup -- --url "${first.url}"`);
+    throw new Error(`课程配置不完整（缺 ${miss.join(', ')}）。重新运行：npm run setup -- --url "${current.url}"`);
   }
-  return first;
+  return current;
 }
 
 export function loadAnswers() {

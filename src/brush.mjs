@@ -166,14 +166,12 @@ log.ok('auth ok', { uid: ME.id, name: ME.name, school: ME.school });
 /* ═══════════════ tree ═══════════════ */
 
 log.phase('tree');
-const leafFile = [
-  path.join(OUT, `leaves-${course.classroomId}.json`),
-  path.join(OUT, 'leaves.json'),
-].find((f) => fs.existsSync(f));
+const leafFile = path.join(OUT, `leaves-${course.classroomId}.json`);
 
-if (!leafFile) {
-  console.log(fail('缺少章节树缓存，重新运行 npm run setup'));
-  log.error('leaf cache missing');
+if (!fs.existsSync(leafFile)) {
+  console.log(fail(`缺少章节树缓存：${path.basename(leafFile)}`));
+  console.log(color.gray('  重新运行 npm run setup，或菜单里选「课程管理 → 添加/刷新」'));
+  log.error('leaf cache missing', { file: leafFile });
   await log.flush();
   process.exit(3);
 }
