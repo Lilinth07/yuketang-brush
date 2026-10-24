@@ -28,6 +28,7 @@ const PRESETS = [
 ];
 
 const cur = loadLLMConfig(ROOT);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const mask = (k) => (k ? k.slice(0, 6) + '…' + k.slice(-4) : '(未设置)');
 
 console.log('');
@@ -67,11 +68,18 @@ if (!baseUrl || !model) {
 if (!apiKey) {
   console.log('');
   console.log(fail('没有 API Key。去 https://platform.deepseek.com/api_keys 拿一个'));
-  process.exit(2);
+  { await sleep(80); process.exit(2); }
 }
 
 console.log('');
 console.log(info('测试连通性…'));
+
+// DeepSeek 官方只有 deepseek-chat / deepseek-reasoner
+if (/api\.deepseek\.com/i.test(baseUrl) && !/^deepseek-(chat|reasoner)$/.test(model)) {
+  console.log(warn(`注意：DeepSeek 官方没有「${model}」这个模型`));
+  console.log(color.gray('  可用：deepseek-chat（V3，快） / deepseek-reasoner（R1，推理强）'));
+}
+
 let testOk = false;
 try {
   const r = await checkLLM({ baseUrl, model, apiKey });
@@ -83,7 +91,7 @@ try {
   const go = process.argv.includes('--force');
   if (!go) {
     console.log(color.gray('  加 --force 可以强行保存（例如模型名暂时不可用）'));
-    process.exit(1);
+    { await sleep(80); process.exit(1); }
   }
 }
 
@@ -101,4 +109,4 @@ if (testOk) {
   console.log(`  npm run exam -- --leaf <ID> --auto --api ${color.gray('# 模型自动答题并提交')}`);
   console.log('');
 }
-process.exit(0);
+{ await sleep(80); process.exit(0); }

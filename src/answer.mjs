@@ -125,7 +125,7 @@ export async function llmAnswer(title, items, { baseUrl, apiKey, model, log = ()
     throw new Error(
       '没有配置 LLM API。设置环境变量后重试：\n' +
         '  $env:LLM_API_KEY="sk-..."\n' +
-        '  $env:LLM_MODEL="gpt-4o-mini"        # 可选\n' +
+        '  $env:LLM_MODEL="deepseek-chat"       # 可选，默认就是它\n' +
         '  $env:LLM_BASE_URL="https://..."     # 可选，兼容 OpenAI 的中转/本地服务都可以',
     );
   }

@@ -36,6 +36,7 @@ const OPT = {
   manual: flag('manual'),
   dry: flag('dry'),
   fast: flag('fast'),
+  force: flag('force'),
   llmCheck: flag('llm-check'),
   delay: Number(val('delay', 0)) || 0,
   wait: Number(val('wait', 15)) || 15,
@@ -568,6 +569,13 @@ async function processOne(leafId, { auto, fill, dry, manual, waitMin }) {
   console.log('');
   console.log(color.bold(`── ${ex.meta.title}`) + color.gray(`  ${ex.data.problems.length} 题`));
 
+  // 整卷已作答的直接跳过，省掉解码和模型调用
+  const allDone = ex.data.problems.every((p) => Number(p.user?.my_count) > 0);
+  if (allDone && !OPT.force) {
+    console.log(color.gray('  全部题目已作答，跳过'));
+    return { leaf: leafId, title: ex.meta.title, submitted: false, via: 'done' };
+  }
+
   const fontBuf = Buffer.from(
     await (await fetch(ex.data.font, { headers: { 'user-agent': H['user-agent'] } })).arrayBuffer(),
   );
@@ -658,22 +666,42 @@ if (OPT.list || (!OPT.leaf && !OPT.all)) {
 let tasks = [];
 if (OPT.all) {
   const list = await listAssignments();
-  const ready = list.filter((x) => fs.existsSync(ansFileOf(x.leaf)));
-  const c = ready.filter((x) => {
-    try {
-      const a = JSON.parse(fs.readFileSync(ansFileOf(x.leaf), 'utf8'));
-      return Object.entries(a).some(([k, v]) => /^\d+$/.test(k) && String(v).trim());
-    } catch {
-      return false;
+
+  if (OPT.auto) {
+    // 先确认 AI 可用，避免对每个作业各报一次错
+    const { loadLLMConfig } = await import('./answer.mjs');
+    const llm = loadLLMConfig(ROOT);
+    if (!llm.apiKey) {
+      console.log('');
+      console.log(fail('自动答题需要 AI，但还没有配置'));
+      console.log(color.gray('  运行 npm run llm 配置（默认 DeepSeek），或设置环境变量 LLM_API_KEY'));
+      process.exit(2);
     }
-  });
-  if (!c.length) {
-    console.log(warn('没有任何作业有可用答案。先导出题目并填写，或用 --auto。'));
-    console.log(color.gray(`共 ${list.length} 个作业，0 个有答案`));
-    process.exit(0);
+    console.log(color.gray(`  使用 ${llm.model} @ ${llm.baseUrl}`));
+
+    // 模型答题：不需要预先有答案文件，全部作业都是候选，
+    // 已完成的会在 processOne 里被跳过
+    tasks = list.map((x) => x.leaf);
+    console.log(info(`批量模式：模型答题，${tasks.length} 个作业（已完成的自动跳过）`));
+  } else {
+    const c = list
+      .filter((x) => fs.existsSync(ansFileOf(x.leaf)))
+      .filter((x) => {
+        try {
+          const a = JSON.parse(fs.readFileSync(ansFileOf(x.leaf), 'utf8'));
+          return Object.entries(a).some(([k, v]) => /^\d+$/.test(k) && String(v).trim());
+        } catch {
+          return false;
+        }
+      });
+    if (!c.length) {
+      console.log(warn('没有任何作业有可用答案。'));
+      console.log(color.gray(`共 ${list.length} 个作业，0 个有答案。想用模型答题请选「模型自动答题并提交」`));
+      process.exit(0);
+    }
+    tasks = c.map((x) => x.leaf);
+    console.log(info(`批量模式：${tasks.length}/${list.length} 个作业有答案`));
   }
-  tasks = c.map((x) => x.leaf);
-  console.log(info(`批量模式：${tasks.length}/${list.length} 个作业有答案`));
 } else {
   tasks = [OPT.leaf];
 }
