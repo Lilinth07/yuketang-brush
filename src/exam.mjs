@@ -31,9 +31,11 @@ const OPT = {
   all: flag('all'),
   leaf: Number(val('leaf', 0)) || null,
   fill: flag('fill'),
+  api: flag('api'),
   auto: flag('auto'),
   manual: flag('manual'),
   dry: flag('dry'),
+  fast: flag('fast'),
   delay: Number(val('delay', 0)) || 0,
   wait: Number(val('wait', 15)) || 15,
   course: val('course'),
@@ -212,6 +214,63 @@ async function waitChallengePassed(frame, page, waitMin) {
   return false;
 }
 
+/**
+ * 模拟人类指针点击。
+ * 直接 locator.click() 会瞬移 + 正中元素中心，命中 anti-cheat 的
+ * pointer.move-per-down / trajectory-points / center-hit-ratio / click-directness。
+ * 这里改用：贝塞尔轨迹 + 落点偏移 + 按下期间微抖 + 随机节奏。
+ */
+async function humanClick(page, locator) {
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  await locator.scrollIntoViewIfNeeded({ timeout: 4000 }).catch(() => {});
+  const box = await locator.boundingBox().catch(() => null);
+  if (!box || box.width < 1 || box.height < 1) {
+    await locator.click({ timeout: 5000 }).catch(() => {});
+    return false;
+  }
+
+  // 落点避开正中，落在 35%~65% 区间
+  const tx = box.x + box.width * rnd(0.35, 0.65);
+  const ty = box.y + box.height * rnd(0.35, 0.65);
+
+  // 起点：左侧偏上一点，模拟从上一处移过来
+  const sx = Math.max(4, tx + rnd(-180, -70));
+  const sy = Math.max(4, ty + rnd(-90, 90));
+
+  const c1x = sx + (tx - sx) * rnd(0.2, 0.4) + rnd(-55, 55);
+  const c1y = sy + (ty - sy) * rnd(0.2, 0.4) + rnd(-55, 55);
+  const c2x = sx + (tx - sx) * rnd(0.6, 0.8) + rnd(-55, 55);
+  const c2y = sy + (ty - sy) * rnd(0.6, 0.8) + rnd(-55, 55);
+
+  const steps = Math.floor(rnd(16, 30));
+  await page.mouse.move(sx, sy);
+  await sleep(rnd(25, 70));
+
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const u = 1 - t;
+    const x = u * u * u * sx + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * tx;
+    const y = u * u * u * sy + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * ty;
+    await page.mouse.move(x, y);
+    await sleep(rnd(6, 17));
+  }
+
+  await sleep(rnd(45, 120));
+  await page.mouse.down();
+
+  // 按下期间保持轻微移动 —— 人手指按下去不会纹丝不动
+  const wobbles = 2 + Math.floor(rnd(0, 2));
+  for (let i = 0; i < wobbles; i++) {
+    await sleep(rnd(25, 60));
+    await page.mouse.move(tx + rnd(-2.5, 2.5), ty + rnd(-2.5, 2.5));
+  }
+
+  await sleep(rnd(35, 85));
+  await page.mouse.up();
+  return true;
+}
+
 /** 在页面上挂一条醒目的操作提示 */
 async function showBanner(frame, text) {
   await frame
@@ -241,6 +300,77 @@ async function isSubmitted(frame) {
   return false;
 }
 
+/* ═════════ 接口直提（不走 UI） ═════════ */
+
+/**
+ * POST /mooc-api/v1/lms/exercise/problem_apply/
+ *   { classroom_id, problem_id, answer: ["C"] }    单选
+ *   { classroom_id, problem_id, answer: ["A","B"] } 多选
+ * 需要 X-CSRFToken（取 cookie 里的 csrftoken）。
+ *
+ * 实测：连续提交不产生 pointer / environment 风险分，
+ * 比模拟点击安全得多——因为根本没碰 DOM。
+ */
+async function submitViaAPI(leafId, problems, answers, { delayMs = 1300 } = {}) {
+  const csrf = COOKIES.find((c) => c.name === 'csrftoken')?.value || '';
+  const url = `${ORIGIN}/mooc-api/v1/lms/exercise/problem_apply/?classroom_id=${ROOM}&uv_id=2910&term=latest`;
+  const referer = `${ORIGIN}/ai-workspace/lms-graph/${ROOM}/exercise/${leafId}`;
+
+  let okN = 0;
+  let skipN = 0;
+  const wrong = [];
+
+  for (let i = 0; i < problems.length; i++) {
+    const p = problems[i];
+    const raw = String(answers[String(i + 1)] || '').trim().toUpperCase();
+    if (!raw) {
+      skipN++;
+      console.log(`${color.gray(`[${i + 1}/${problems.length}]`)} ${color.gray('无答案，跳过')}`);
+      continue;
+    }
+    const letters = raw.split('').filter((c) => /[A-Z]/.test(c));
+    if (!letters.length) {
+      skipN++;
+      continue;
+    }
+
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { ...H, 'content-type': 'application/json', 'x-csrftoken': csrf, referer },
+      body: JSON.stringify({ classroom_id: ROOM, problem_id: p.problem_id, answer: letters }),
+    }).catch(() => null);
+
+    let j = null;
+    try {
+      j = await r.json();
+    } catch {}
+
+    if (j?.success) {
+      okN++;
+      const sc = j.data?.my_score;
+      const right = j.data?.is_right ?? j.data?.is_correct;
+      const correct = Array.isArray(j.data?.answer) ? j.data.answer.join('') : '';
+      if (right) {
+        console.log(`${color.gray(`[${i + 1}/${problems.length}]`)} 提交 ${letters.join('')} ${color.green(`✓ ${sc}分`)}`);
+      } else {
+        wrong.push({ n: i + 1, mine: letters.join(''), correct });
+        console.log(
+          `${color.gray(`[${i + 1}/${problems.length}]`)} 提交 ${letters.join('')} ${color.red(`✗ ${sc}分`)}${correct ? color.gray(`  正确答案 ${correct}`) : ''}`,
+        );
+      }
+    } else if (/chance/i.test(j?.msg || '')) {
+      skipN++;
+      console.log(`${color.gray(`[${i + 1}/${problems.length}]`)} ${color.yellow('已无作答机会，跳过')}`);
+    } else {
+      console.log(`${color.gray(`[${i + 1}/${problems.length}]`)} ${color.red('提交失败')} ${j?.msg || r?.status || ''}`);
+    }
+
+    await sleep(delayMs + Math.floor(Math.random() * 700));
+  }
+
+  return { submitted: okN > 0, via: 'api', ok: okN, skipped: skipN, wrong };
+}
+
 /* ═════════ 填涂 ═════════ */
 
 async function fillAnswers(page, leafId, answers, total, { dry, manual, waitMin }) {
@@ -256,6 +386,10 @@ async function fillAnswers(page, leafId, answers, total, { dry, manual, waitMin 
   if (!(await waitChallengePassed(frame, page, Math.min(waitMin, 10)))) {
     return { submitted: false, via: 'challenge-timeout' };
   }
+
+  // 默认走人类化点击；--fast 退回普通 click（快但会被风控）
+  const click = (loc) =>
+    OPT.fast ? loc.click({ timeout: 5000 }).catch(() => {}) : humanClick(page, loc);
 
   for (let i = 1; i <= total; i++) {
     const ans = String(answers[String(i)] || '').trim().toUpperCase();
@@ -274,11 +408,11 @@ async function fillAnswers(page, leafId, answers, total, { dry, manual, waitMin 
               return el.classList.contains('is-checked') || Boolean(inp && inp.checked);
             })
             .catch(() => false);
-        await opt.click({ timeout: 5000 }).catch(() => {});
+        await click(opt);
         await jitter(180);
         let on = await isOn();
         if (!on) {
-          await opt.click({ timeout: 3000 }).catch(() => {});
+          await click(opt);
           await jitter(260);
           on = await isOn();
         }
@@ -293,7 +427,7 @@ async function fillAnswers(page, leafId, answers, total, { dry, manual, waitMin 
       await waitNoOverlay(frame, page);
       const next = frame.locator('button:visible:has-text("下一题")').last();
       if (await next.count()) {
-        await next.click({ timeout: 5000 }).catch(() => {});
+        await click(next);
         await sleep(700);
       }
     }
@@ -343,7 +477,8 @@ async function fillAnswers(page, leafId, answers, total, { dry, manual, waitMin 
   // 自动提交
   await jitter(700);
   console.log(info('点击提交…'));
-  await submitBtn.click({ timeout: 8000 });
+  if (OPT.fast) await submitBtn.click({ timeout: 8000 });
+  else await humanClick(page, submitBtn);
   await sleep(1200);
   for (const scope of [frame, page]) {
     for (const t of ['确定', '确认']) {
@@ -419,7 +554,20 @@ async function processOne(page, leafId, { auto, fill, dry, manual, waitMin }) {
       console.log(warn('答案文件是空的，跳过填涂'));
     } else {
       console.log(info(`读取 ${n} 个答案`));
-      result = await fillAnswers(page, leafId, answers, ex.data.problems.length, { dry, manual, waitMin });
+      if (OPT.api) {
+        if (OPT.dry) {
+          console.log(warn('演练：接口模式下只打印计划'));
+          for (let i = 0; i < ex.data.problems.length; i++) {
+            const a = answers[String(i + 1)];
+            console.log(`  ${String(i + 1).padStart(2)}  ${a || color.gray('(空)')}`);
+          }
+          result = { submitted: false, via: 'dry' };
+        } else {
+          result = await submitViaAPI(leafId, ex.data.problems, answers);
+        }
+      } else {
+        result = await fillAnswers(page, leafId, answers, ex.data.problems.length, { dry, manual, waitMin });
+      }
     }
   }
 
