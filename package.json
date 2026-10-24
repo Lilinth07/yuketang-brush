@@ -27,7 +27,8 @@
     "verify": "node src/verify.mjs",
     "logstat": "node src/logstat.mjs",
     "login": "node src/login.mjs",
-    "doctor": "node src/doctor.mjs"
+    "doctor": "node src/doctor.mjs",
+    "exam": "node src/exam.mjs"
   },
   "keywords": [
     "yuketang",
