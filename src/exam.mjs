@@ -27,6 +27,7 @@ const OPT = {
   list: flag('list'),
   leaf: Number(val('leaf', 0)) || null,
   fill: flag('fill'),
+  auto: flag('auto'),
   dry: flag('dry'),
   delay: Number(val('delay', 0)) || 0,
   course: val('course'),
@@ -246,8 +247,13 @@ async function fillAnswers(page, leafId, answers, total, { dry }) {
   }
 
   if (dry) {
-    console.log(warn('\n演练模式：已填涂但不提交。检查页面后手动提交，或去掉 --dry 重跑。'));
-    return { submitted: false };
+    const btn = frame.locator('button.el-button--primary:has-text("提交")').first();
+    const disabled = await btn.isDisabled().catch(() => true);
+    console.log('');
+    if (disabled) console.log(warn('提交按钮仍是灰的 —— 还有题目没作答'));
+    else console.log(ok('提交按钮已可用，去掉 --dry 即可提交'));
+    console.log(warn('演练模式：已填涂但不提交。'));
+    return { submitted: false, ready: !disabled };
   }
 
   await jitter(700);
@@ -332,6 +338,40 @@ fs.writeFileSync(mdFile, md, 'utf8');
 const ansFile = path.join(OUT, `answers-${ex.meta.leaf}.json`);
 if (!fs.existsSync(ansFile)) {
   fs.writeFileSync(ansFile, JSON.stringify(answersTemplate(ex.data), null, 2), 'utf8');
+}
+
+/* ── 自动作答（可选） ── */
+
+if (OPT.auto) {
+  const { loadLLMConfig, llmAnswer } = await import('./answer.mjs');
+  const llm = loadLLMConfig(ROOT);
+  try {
+    const items = ex.data.problems.map((p, i) => ({
+      n: i + 1,
+      type: p.content.TypeText || p.content.Type,
+      multi: p.content.Type === 'MultipleChoice',
+      stem: dec.decodeHtml(p.content.Body),
+      options: (p.content.Options || []).map((o) => ({
+        key: o.key,
+        text: dec.decodeHtml(o.value || '').replace(/\n+/g, ' '),
+      })),
+    }));
+    const { answers } = await llmAnswer(ex.meta.title, items, {
+      ...llm,
+      log: (m) => console.log(info(m)),
+    });
+    const merged = { ...answersTemplate(ex.data), ...answers };
+    fs.writeFileSync(ansFile, JSON.stringify(merged, null, 2), 'utf8');
+    console.log(ok(`模型作答完成：${Object.keys(answers).length} 题`));
+    console.log(color.gray('  ' + Object.entries(answers).map(([k, v]) => `${k}:${v}`).join('  ')));
+  } catch (e) {
+    console.error(fail(e.message));
+    if (!OPT.fill) {
+      await browser.close();
+      process.exit(5);
+    }
+  }
+  console.log('');
 }
 
 console.log('');

@@ -187,6 +187,27 @@ npm run exam -- --leaf 90000003 --fill --dry   # 先演练：只填不提交
 npm run exam -- --leaf 90000003 --fill         # 确认无误后真提交
 ```
 
+### 全自动（接模型）
+
+配上任意 OpenAI 兼容接口，让模型自己答：
+
+```bash
+$env:LLM_API_KEY = "sk-..."
+$env:LLM_MODEL   = "gpt-4o-mini"                    # 可选
+$env:LLM_BASE_URL = "https://api.openai.com/v1"     # 可选，中转/本地服务都行
+
+npm run exam -- --leaf 90000003 --auto --fill --dry   # 先看它答得对不对
+npm run exam -- --leaf 90000003 --auto --fill         # 全自动：答 + 填 + 提交
+```
+
+`--auto` 会把解码后的题目连同一份「常见形近字对照」一起发给模型，让它先纠正再作答。答案会写进 `answers-<leaf>.json`，你可以先看再决定要不要提交。
+
+也可以只生成答案不填涂：
+
+```bash
+npm run exam -- --leaf 90000003 --auto     # 只写 answers 文件
+```
+
 答案文件格式：
 
 ```json
