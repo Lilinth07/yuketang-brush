@@ -235,23 +235,51 @@ npm run exam -- --all --api             # 所有有答案的作业，逐个接�
 
 ### 全自动（接模型）
 
-配上任意 OpenAI 兼容接口，让模型自己答：
+作业可以完全交给模型：解码 → 模型答题 → 接口提交，全程不碰浏览器界面。
+
+配置走 OpenAI Chat Completions 标准协议，**默认端点就是 DeepSeek 官方**：
 
 ```bash
-$env:LLM_API_KEY = "sk-..."
-$env:LLM_MODEL   = "gpt-4o-mini"                    # 可选
-$env:LLM_BASE_URL = "https://api.openai.com/v1"     # 可选，中转/本地服务都行
-
-npm run exam -- --leaf 90000003 --auto --fill --dry   # 先看它答得对不对
-npm run exam -- --all --auto --manual                 # 批量：模型答 + 你点提交
+npm run llm          # 交互式配置，默认 https://api.deepseek.com/v1 + deepseek-chat
+npm run llm-check    # 只测连通性，不写配置
 ```
 
-`--auto` 会把解码后的题目连同一份「常见形近字对照」一起发给模型，让它先纠正再作答。答案会写进 `answers-<leaf>.json`，你可以先看再决定要不要提交。
+```
+AI 配置  ·  OpenAI Chat Completions 协议
 
-也可以只生成答案不填涂：
+  当前端点  https://api.deepseek.com/v1
+  当前模型  deepseek-chat
+  当前密钥  (未设置)
+
+  常用预设（回车用默认，或直接输入序号换一套）：
+    1. DeepSeek 官方  https://api.deepseek.com/v1  ·  deepseek-chat
+    2. OpenAI        https://api.openai.com/v1    ·  gpt-4o-mini
+    3. Moonshot      https://api.moonshot.cn/v1   ·  moonshot-v1-8k
+    4. 本机 Ollama    http://127.0.0.1:11434/v1   ·  qwen2.5:7b
+```
+
+配好之后：
 
 ```bash
-npm run exam -- --leaf 90000003 --auto     # 只写 answers 文件
+npm run exam -- --leaf 90000003 --auto --api          # 答 + 提交
+npm run exam -- --all --auto --api                    # 批量
+npm run brush -- --only-exam                          # 走统一入口
+```
+
+也可以用环境变量，优先级高于配置文件：
+
+```powershell
+$env:LLM_API_KEY  = "sk-..."
+$env:LLM_BASE_URL = "https://api.deepseek.com/v1"   # 可选，默认已是这个
+$env:LLM_MODEL    = "deepseek-chat"                 # 可选
+```
+
+想用 OpenAI / 中转 / 本地 vLLM / Ollama，把 `baseUrl` 和 `model` 换掉即可，协议完全一样。
+
+答案会写进 `answers-<leaf>.json`，你可以先看再决定要不要提交：
+
+```bash
+npm run exam -- --leaf 90000003 --auto     # 只生成答案，不提交
 ```
 
 答案文件格式：
@@ -316,6 +344,8 @@ npm run exam -- --leaf 90000003 --auto     # 只写 answers 文件
 | `npm run exam -- --leaf <id>` | 导出题目为 markdown |
 | `npm run exam -- --leaf <id> --fill --api` | 接口直提（推荐） |
 | `npm run exam -- --all --api` | 批量交所有有答案的作业 |
+| `npm run llm` | 配置 AI（默认 DeepSeek） |
+| `npm run llm-check` | 测试模型连通性 |
 
 ### 参数
 

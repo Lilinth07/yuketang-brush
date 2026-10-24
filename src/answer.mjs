@@ -1,13 +1,21 @@
 /**
- * 自动作答：调用 OpenAI 兼容接口，把题目丢给模型，拿回 JSON 答案。
+ * 自动作答：调用 OpenAI Chat Completions 标准协议，把题目丢给模型，拿回 JSON 答案。
  *
- * 配置优先级：环境变量 > config.local.json 的 llm 字段
- *   LLM_BASE_URL   默认 https://api.openai.com/v1
+ * 默认端点用 DeepSeek 官方接口（https://api.deepseek.com/v1，模型 deepseek-chat）。
+ * 任何兼容 OpenAI 的服务都能用：OpenAI、Moonshot、通义、本地 vLLM / Ollama 都行。
+ *
+ * 配置优先级：环境变量 > config.local.json 的 llm 字段 > 内置默认值
+ *   LLM_BASE_URL   默认 https://api.deepseek.com/v1
  *   LLM_API_KEY    必填
- *   LLM_MODEL      默认 gpt-4o-mini
+ *   LLM_MODEL      默认 deepseek-chat
  */
 import fs from 'node:fs';
 import path from 'node:path';
+
+export const DEFAULT_LLM = {
+  baseUrl: 'https://api.deepseek.com/v1',
+  model: 'deepseek-chat',
+};
 
 export function loadLLMConfig(rootDir) {
   const cfgFile = path.join(rootDir, 'config.local.json');
@@ -17,9 +25,48 @@ export function loadLLMConfig(rootDir) {
   } catch {}
 
   return {
-    baseUrl: process.env.LLM_BASE_URL || local.baseUrl || 'https://api.openai.com/v1',
+    baseUrl: process.env.LLM_BASE_URL || local.baseUrl || DEFAULT_LLM.baseUrl,
     apiKey: process.env.LLM_API_KEY || local.apiKey || '',
-    model: process.env.LLM_MODEL || local.model || 'gpt-4o-mini',
+    model: process.env.LLM_MODEL || local.model || DEFAULT_LLM.model,
+  };
+}
+
+/** 连通性测试：发一条最小请求，回报延迟和返回内容 */
+export async function checkLLM({ baseUrl, apiKey, model }) {
+  if (!apiKey) throw new Error('没有 API Key');
+  const url = `${String(baseUrl).replace(/\/$/, '')}/chat/completions`;
+  const t0 = Date.now();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  let r;
+  try {
+    r = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: 16,
+        temperature: 0,
+        messages: [{ role: 'user', content: '只回复两个字：正常' }],
+      }),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+  const ms = Date.now() - t0;
+  const text = await r.text();
+  if (!r.ok) throw new Error(`HTTP ${r.status}：${text.slice(0, 200)}`);
+  let j = null;
+  try {
+    j = JSON.parse(text);
+  } catch {}
+  return {
+    ms,
+    reply: (j?.choices?.[0]?.message?.content || '').trim() || '(空)',
+    model: j?.model || model,
+    usage: j?.usage || null,
+    raw: text.slice(0, 300),
   };
 }
 

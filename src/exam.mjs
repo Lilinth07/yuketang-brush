@@ -36,10 +36,41 @@ const OPT = {
   manual: flag('manual'),
   dry: flag('dry'),
   fast: flag('fast'),
+  llmCheck: flag('llm-check'),
   delay: Number(val('delay', 0)) || 0,
   wait: Number(val('wait', 15)) || 15,
   course: val('course'),
 };
+
+/* ── LLM 连通性测试（不需要课程配置） ── */
+
+if (OPT.llmCheck) {
+  const { loadLLMConfig, checkLLM } = await import('./answer.mjs');
+  const llm = loadLLMConfig(ROOT);
+  console.log('');
+  console.log(color.bold('AI 连通性测试'));
+  console.log(color.gray(`  端点  ${llm.baseUrl}`));
+  console.log(color.gray(`  模型  ${llm.model}`));
+  console.log(color.gray(`  Key   ${llm.apiKey ? llm.apiKey.slice(0, 6) + '…' + llm.apiKey.slice(-4) : '(未设置)'}`));
+  console.log('');
+  if (!llm.apiKey) {
+    console.log(fail('没有 API Key。运行 npm run llm 配置，或设置环境变量 LLM_API_KEY'));
+    await new Promise((r) => setTimeout(r, 80));
+    process.exit(2);
+  }
+  try {
+    const r = await checkLLM(llm);
+    console.log(ok(`连通正常，${r.ms}ms`));
+    console.log(color.gray(`  模型回复：${r.reply}`));
+    if (r.usage) console.log(color.gray(`  tokens：${r.usage.total_tokens ?? '-'}`));
+  } catch (e) {
+    console.log(fail(`连接失败：${e.message}`));
+    await new Promise((r) => setTimeout(r, 80));
+    process.exit(1);
+  }
+  console.log('');
+  process.exit(0);
+}
 
 let course;
 try {

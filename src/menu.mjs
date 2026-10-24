@@ -138,6 +138,7 @@ let lastMsg = '';
 async function render() {
   const cfg = loadConfig();
   const course = getActiveCourse(cfg);
+  const llmOn = Boolean(cfg.llm?.apiKey || process.env.LLM_API_KEY);
 
   clear();
   console.log(color.bold(box(['雨课堂刷课器', color.gray('双击就能用 · 无需命令')])));
@@ -177,6 +178,7 @@ async function render() {
   console.log(`  ${color.gray('[4]')} 环境诊断`);
   console.log(`  ${color.gray('[5]')} 打开日志文件夹`);
   console.log(`  ${color.green('[6]')} 作业 / 测验`);
+  console.log(`  ${color.gray('[7]')} AI 设置${llmOn ? color.green(' 已配置') : color.gray(' 未配置')}`);
   console.log(`  ${color.gray('[0]')} 退出`);
   console.log('');
 
@@ -308,6 +310,15 @@ async function actLogs() {
   }
 }
 
+/* ───── AI 设置 ───── */
+
+async function actLLM() {
+  clear();
+  await run('llm.mjs');
+  console.log('');
+  await ask(color.gray('  按回车返回 '));
+}
+
 /* ───── 作业 / 测验 ───── */
 
 async function actExam() {
@@ -400,6 +411,9 @@ async function main() {
         break;
       case '6':
         await actExam();
+        break;
+      case '7':
+        await actLLM();
         break;
       default:
         break;
