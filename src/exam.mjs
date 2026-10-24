@@ -311,7 +311,25 @@ async function isSubmitted(frame) {
  * 实测：连续提交不产生 pointer / environment 风险分，
  * 比模拟点击安全得多——因为根本没碰 DOM。
  */
-async function submitViaAPI(leafId, problems, answers, { delayMs = 1300 } = {}) {
+/** 带 429 退避的 POST：5s → 10s → 20s，最多 3 次 */
+async function postWithRetry(url, opts, { retries = 3, log = console.log } = {}) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const r = await fetch(url, opts).catch(() => null);
+    if (!r) {
+      if (attempt === retries) return null;
+      await sleep(2000);
+      continue;
+    }
+    if (r.status !== 429) return r;
+    if (attempt === retries) return r;
+    const wait = 5000 * 2 ** attempt; // 5s / 10s / 20s
+    log(color.yellow(`  429 限流，${wait / 1000}s 后重试（${attempt + 1}/${retries}）`));
+    await sleep(wait);
+  }
+  return null;
+}
+
+async function submitViaAPI(leafId, problems, answers, { delayMs = 4200 } = {}) {
   const csrf = COOKIES.find((c) => c.name === 'csrftoken')?.value || '';
   const url = `${ORIGIN}/mooc-api/v1/lms/exercise/problem_apply/?classroom_id=${ROOM}&uv_id=2910&term=latest`;
   const referer = `${ORIGIN}/ai-workspace/lms-graph/${ROOM}/exercise/${leafId}`;
@@ -334,11 +352,15 @@ async function submitViaAPI(leafId, problems, answers, { delayMs = 1300 } = {}) 
       continue;
     }
 
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { ...H, 'content-type': 'application/json', 'x-csrftoken': csrf, referer },
-      body: JSON.stringify({ classroom_id: ROOM, problem_id: p.problem_id, answer: letters }),
-    }).catch(() => null);
+    const r = await postWithRetry(
+      url,
+      {
+        method: 'POST',
+        headers: { ...H, 'content-type': 'application/json', 'x-csrftoken': csrf, referer },
+        body: JSON.stringify({ classroom_id: ROOM, problem_id: p.problem_id, answer: letters }),
+      },
+      { log: console.log },
+    );
 
     let j = null;
     try {
@@ -365,7 +387,7 @@ async function submitViaAPI(leafId, problems, answers, { delayMs = 1300 } = {}) 
       console.log(`${color.gray(`[${i + 1}/${problems.length}]`)} ${color.red('提交失败')} ${j?.msg || r?.status || ''}`);
     }
 
-    await sleep(delayMs + Math.floor(Math.random() * 700));
+    await sleep(delayMs + Math.floor(Math.random() * 1000));
   }
 
   return { submitted: okN > 0, via: 'api', ok: okN, skipped: skipN, wrong };
