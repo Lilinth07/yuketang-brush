@@ -10,7 +10,7 @@ import {
   ROOT, OUT, LOGDIR, COOKIE_FILE,
   loadConfig, getActiveCourse, setActiveCourse, removeCourse,
 } from './config.mjs';
-import { color, truncate, visualWidth } from './ui.mjs';
+import { color, truncate, visualWidth, warn } from './ui.mjs';
 
 const BIN = process.execPath;
 const SRC = (f) => path.join(ROOT, 'src', f);
@@ -138,7 +138,6 @@ let lastMsg = '';
 async function render() {
   const cfg = loadConfig();
   const course = getActiveCourse(cfg);
-  const llmOn = Boolean(cfg.llm?.apiKey || process.env.LLM_API_KEY);
 
   clear();
   console.log(color.bold(box(['雨课堂刷课器', color.gray('双击就能用 · 无需命令')])));
@@ -178,7 +177,6 @@ async function render() {
   console.log(`  ${color.gray('[4]')} 环境诊断`);
   console.log(`  ${color.gray('[5]')} 打开日志文件夹`);
   console.log(`  ${color.green('[6]')} 作业 / 测验`);
-  console.log(`  ${color.gray('[7]')} AI 设置${llmOn ? color.green(' 已配置') : color.gray(' 未配置')}`);
   console.log(`  ${color.gray('[0]')} 退出`);
   console.log('');
 
@@ -310,26 +308,49 @@ async function actLogs() {
   }
 }
 
-/* ───── AI 设置 ───── */
-
-async function actLLM() {
-  clear();
-  await run('llm.mjs');
-  console.log('');
-  await ask(color.gray('  按回车返回 '));
-}
-
 /* ───── 作业 / 测验 ───── */
 
 async function actExam() {
   const course = getActiveCourse(loadConfig());
+
+  const hasKey = () => {
+    const c = loadConfig();
+    return Boolean(c.llm?.apiKey || process.env.LLM_API_KEY);
+  };
+  const modelName = () => {
+    const c = loadConfig();
+    return c.llm?.model || process.env.LLM_MODEL || 'deepseek-chat';
+  };
+
+  // 第一次进来就把 AI 配好，否则「自动答题」点了也跑不通
+  if (!hasKey()) {
+    clear();
+    console.log(color.bold('  作业 / 测验') + color.gray(`  ·  ${course?.name || ''}`));
+    console.log('');
+    console.log(warn('还没有配置 AI，自动答题需要它（也可以只用「批量提交已有答案」）'));
+    console.log('');
+    const go = (await ask(color.gray('  现在配置？(Y/n) > '))).trim();
+    if (!/^n/i.test(go)) {
+      clear();
+      await run('llm.mjs');
+      console.log('');
+      await ask(color.gray('  按回车继续 '));
+    }
+  }
+
   for (;;) {
     clear();
     console.log(color.bold('  作业 / 测验') + color.gray(`  ·  ${course?.name || ''}`));
     console.log('');
+    console.log(
+      `  AI      ${hasKey() ? color.green(`已配置 · ${modelName()}`) : color.gray('未配置（自动答题不可用）')}`,
+    );
+    console.log('');
     console.log(`  ${color.green('[1]')} 列出所有作业`);
-    console.log(`  ${color.green('[2]')} 批量提交（已有答案的作业）`);
-    console.log(`  ${color.green('[3]')} 导出某份题目`);
+    console.log(`  ${color.green('[2]')} 模型自动答题并提交`);
+    console.log(`  ${color.green('[3]')} 批量提交（已有答案的作业）`);
+    console.log(`  ${color.green('[4]')} 导出某份题目`);
+    console.log(`  ${color.gray('[5]')} 配置 AI`);
     console.log(`  ${color.gray('[0]')} 返回`);
     console.log('');
     if (lastMsg) {
@@ -348,21 +369,38 @@ async function actExam() {
       continue;
     }
     if (mode === '2') {
+      if (!hasKey()) {
+        lastMsg = color.yellow('先配置 AI（选 5），或者用「批量提交已有答案」');
+        continue;
+      }
+      clear();
+      await run('exam.mjs', ['--all', '--auto', '--fill', '--api']);
+      console.log('');
+      await ask(color.gray('  按回车返回 '));
+      continue;
+    }
+    if (mode === '3') {
       clear();
       await run('exam.mjs', ['--all', '--fill', '--api']);
       console.log('');
       await ask(color.gray('  按回车返回 '));
       continue;
     }
-    if (mode === '3') {
+    if (mode === '4') {
       const id = (await ask(color.gray('  作业 ID（可先选 1 查看）> '))).trim();
       if (!/^\d+$/.test(id)) continue;
       clear();
       await run('exam.mjs', ['--leaf', id]);
       console.log('');
       console.log(color.gray(`  题目已导出到 out/exam-${id}.md`));
-      console.log(color.gray(`  填好 out/answers-${id}.json 后，回到这里选 2 批量提交，或：`));
-      console.log(color.gray(`  npm run exam -- --leaf ${id} --fill --api`));
+      console.log(color.gray(`  填好 out/answers-${id}.json 后选 3 批量提交`));
+      console.log('');
+      await ask(color.gray('  按回车返回 '));
+      continue;
+    }
+    if (mode === '5') {
+      clear();
+      await run('llm.mjs');
       console.log('');
       await ask(color.gray('  按回车返回 '));
       continue;
@@ -411,9 +449,6 @@ async function main() {
         break;
       case '6':
         await actExam();
-        break;
-      case '7':
-        await actLLM();
         break;
       default:
         break;

@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { ROOT, OUT, CFG, resolveCourse, COOKIE_FILE } from './config.mjs';
-import { createDecoder } from './fontdec.mjs';
+import { createDecoder, needsDecoding } from './fontdec.mjs';
 import { color, ok, fail, warn, info } from './ui.mjs';
 
 const argv = process.argv.slice(2);
@@ -562,7 +562,7 @@ async function fillAnswers(page, leafId, answers, total, { dry, manual, waitMin 
 
 /* ═════════ 单个作业 ═════════ */
 
-async function processOne(page, leafId, { auto, fill, dry, manual, waitMin }) {
+async function processOne(leafId, { auto, fill, dry, manual, waitMin }) {
   const t0 = Date.now();
   const ex = await fetchExercise(leafId);
   console.log('');
@@ -571,6 +571,10 @@ async function processOne(page, leafId, { auto, fill, dry, manual, waitMin }) {
   const fontBuf = Buffer.from(
     await (await fetch(ex.data.font, { headers: { 'user-agent': H['user-agent'] } })).arrayBuffer(),
   );
+  // 只有需要重新比对字形、或者要走 UI 填涂时，才启动浏览器
+  const uiMode = Boolean(fill) && !OPT.api;
+  const needBrowser = needsDecoding(fontBuf, OUT) || uiMode;
+  const page = needBrowser ? await ensurePage() : null;
   const dec = await createDecoder(page, fontBuf, OUT, (m) => console.log(info(m)));
 
   const mdFile = path.join(OUT, `exam-${leafId}.md`);
@@ -674,14 +678,35 @@ if (OPT.all) {
   tasks = [OPT.leaf];
 }
 
-const browser = await chromium.launchPersistentContext(CFG.userDataDir, {
-  channel: CFG.channel,
-  headless: false,
-  viewport: null,
-  args: ['--disable-blink-features=AutomationControlled', '--start-maximized'],
-  ignoreDefaultArgs: ['--enable-automation'],
-});
-const page = browser.pages()[0] || (await browser.newPage());
+/* ── 浏览器按需启动 ── */
+
+let browser = null;
+let page = null;
+
+async function ensurePage() {
+  if (page) return page;
+  browser = await chromium.launchPersistentContext(CFG.userDataDir, {
+    channel: CFG.channel,
+    headless: false,
+    viewport: null,
+    args: ['--disable-blink-features=AutomationControlled', '--start-maximized'],
+    ignoreDefaultArgs: ['--enable-automation'],
+  });
+  // 持久化上下文会恢复上次的标签页（常见表现：一启动就跳回课程页），
+  // 这里只留一个空白页
+  const pages = browser.pages();
+  for (let i = 1; i < pages.length; i++) await pages[i].close().catch(() => {});
+  page = pages[0] || (await browser.newPage());
+  await page.goto('about:blank').catch(() => {});
+  return page;
+}
+
+async function closeBrowser() {
+  if (!browser) return;
+  await browser.close().catch(() => {});
+  browser = null;
+  page = null;
+}
 
 const results = [];
 for (let i = 0; i < tasks.length; i++) {
@@ -690,7 +715,7 @@ for (let i = 0; i < tasks.length; i++) {
   console.log(color.gray(`━━ (${i + 1}/${tasks.length}) ━━`));
   try {
     results.push(
-      await processOne(page, leaf, {
+      await processOne(leaf, {
         auto: OPT.auto,
         fill: OPT.fill,
         dry: OPT.dry,
@@ -715,6 +740,6 @@ if (results.length > 1) {
   console.log(`\n  已提交 ${okN}/${results.length}`);
 }
 
-await sleep(1200);
-await browser.close();
+await sleep(600);
+await closeBrowser();
 process.exit(0);

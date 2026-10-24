@@ -82,6 +82,19 @@ export function loadCache(outDir) {
   return { glyf: null, map: {} };
 }
 
+/** 判断这份字体是否需要浏览器重新比对字形 */
+export function needsDecoding(fontBuffer, outDir) {
+  const tables = parseTables(fontBuffer);
+  const fp = fontFingerprint(fontBuffer, tables);
+  const cache = loadCache(outDir);
+  if (cache.glyf !== fp) return true;
+  const { gid2uni } = parseCmap(fontBuffer, tables);
+  for (const gid of gid2uni.keys()) {
+    if (!cache.map[gid]) return true;
+  }
+  return false;
+}
+
 export function saveCache(outDir, cache) {
   fs.writeFileSync(CACHE_FILE(outDir), JSON.stringify(cache), 'utf8');
 }
@@ -203,6 +216,7 @@ export async function createDecoder(page, fontBuffer, outDir, log = () => {}) {
   }
 
   if (missing.length) {
+    if (!page) throw new Error('字形缓存缺失，需要浏览器解码但没有可用页面');
     log(`需要识别 ${missing.length} 个字形…`);
     const t0 = Date.now();
     const { result, poolSize } = await page.evaluate(PAGE_FN, {
