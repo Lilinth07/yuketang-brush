@@ -183,9 +183,45 @@ npm run exam -- --list
 npm run exam -- --leaf 90000003
 
 # 3. 把答案填进 out/answers-90000003.json，再填涂
-npm run exam -- --leaf 90000003 --fill --dry   # 先演练：只填不提交
-npm run exam -- --leaf 90000003 --fill         # 确认无误后真提交
+npm run exam -- --leaf 90000003 --fill --dry      # 先演练：只填不提交
+npm run exam -- --leaf 90000003 --fill --manual   # 填完把窗口交给你点提交（推荐）
 ```
+
+### 提交为什么要手动
+
+自动点「提交」会触发 **pointer 行为风控**。实测一次就被拦：
+
+```
+pointer  raw=55  applied=50  cap=50   阈值 20
+  pointer.move-per-down.very-low       按下期间几乎没移动
+  pointer.trajectory-points.very-low   轨迹采样点太少
+  pointer.center-hit-ratio.high        点击位置几乎都正中元素中心
+  pointer.click-directness.high        路径太直，没有绕行
+  pointer.move-per-down.low
+```
+
+真人点击会先移到附近、有小抖动、落点偏离中心几像素；`locator.click()` 是瞬移 + 正中，一测就露。
+
+所以加 `--manual`：填涂完全自动，**到提交时把浏览器窗口切到前台**，页面上挂橙色横幅提示你点。你点完之后，工具轮询页面状态，检测到「已提交 / 得分 / 查看解析」就自动关页面、继续下一个作业。
+
+```
+━━ 等你手动提交 ━━
+   浏览器窗口已切到前台。请点击页面底部的【提交】按钮。
+   如果弹出安全核验（轨迹拖拽），按住起点依次经过 1→2→3 到终点松开。
+   最多等 15 分钟；检测到提交成功后自动关页面继续。
+```
+
+万一页面挂着未通过的验证码，工具会先停下来等你过完，再继续填涂——否则遮罩会把所有点击吃掉。
+
+### 批量
+
+先把要做的作业答案准备好（手填或 `--auto` 生成），然后：
+
+```bash
+npm run exam -- --all --manual          # 逐个填涂，每个都等你去点提交
+```
+
+它会挑出所有 `out/answers-<leaf>.json` 里**有实际答案**的作业，按顺序处理，每做完一个切前台等你提交，检测到成功就自动下一个。最后给一张汇总表。
 
 ### 全自动（接模型）
 
@@ -197,7 +233,7 @@ $env:LLM_MODEL   = "gpt-4o-mini"                    # 可选
 $env:LLM_BASE_URL = "https://api.openai.com/v1"     # 可选，中转/本地服务都行
 
 npm run exam -- --leaf 90000003 --auto --fill --dry   # 先看它答得对不对
-npm run exam -- --leaf 90000003 --auto --fill         # 全自动：答 + 填 + 提交
+npm run exam -- --all --auto --manual                 # 批量：模型答 + 你点提交
 ```
 
 `--auto` 会把解码后的题目连同一份「常见形近字对照」一起发给模型，让它先纠正再作答。答案会写进 `answers-<leaf>.json`，你可以先看再决定要不要提交。
