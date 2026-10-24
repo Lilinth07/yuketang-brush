@@ -164,14 +164,24 @@ npm run brush       # 或者直接跑
 
 ---
 
-## 作业 / 测验（半自动）
+## 作业 / 测验
 
 视频是纯接口操作，作业不是。这条链路上有两道坎：
 
 1. **题干字体加密** —— DOM 里读出来是 `19、2007-2008肢户城压司贷那某筑米修…`，靠专属字体渲染成正常中文；
-2. **提交有客户端风控** —— `/c27/anti-cheat/config` 里 12 个评分组，其中 `submission.success-without-ui.multiple` 是**单条即触发**的规则，专门抓「没有 UI 交互就提交成功」。
+2. **提交有客户端风控** —— `/c27/anti-cheat/config` 里 12 个评分组，其中 `pointer.*` 那组专门抓「点击太像机器」。
 
-所以这条线做成半自动：**工具负责解码和填涂，答案由你（或你用的 AI）提供，提交走真实点击**。
+第一条靠字形比对破，第二条靠**走接口不走 DOM** 绕。两条都解决了，所以现在作业也是全自动的。
+
+### 入口
+
+菜单里选 **`[6] 作业 / 测验`**，或者在命令行：
+
+```bash
+npm run brush -- --exam        # 刷完视频接着做作业
+npm run brush -- --only-exam   # 跳过视频，只做作业
+npm run exam -- --all --api    # 等价的独立命令
+```
 
 ### 三步
 
@@ -182,9 +192,9 @@ npm run exam -- --list
 # 2. 导出题目成 markdown（同时生成答案模板）
 npm run exam -- --leaf 90000003
 
-# 3. 把答案填进 out/answers-90000003.json，再填涂
-npm run exam -- --leaf 90000003 --fill --dry      # 先演练：只填不提交
-npm run exam -- --leaf 90000003 --fill --manual   # 填完把窗口交给你点提交（推荐）
+# 3. 把答案填进 out/answers-90000003.json，再提交
+npm run exam -- --leaf 90000003 --fill --dry      # 先演练：只算计划不发请求
+npm run exam -- --leaf 90000003 --fill --api      # 接口直提（推荐）
 ```
 
 ### 提交方式：没有“交卷”，逐题即完成
@@ -300,9 +310,12 @@ npm run exam -- --leaf 90000003 --auto     # 只写 answers 文件
 | `npm run doctor` | 环境自检 |
 | `npm run logstat` | 分析最近一次运行的日志 |
 | `npm run verify` | 全量复核完成率 |
+| `npm run brush -- --exam` | 刷完视频接着做作业 |
+| `npm run brush -- --only-exam` | 跳过视频，只做作业 |
 | `npm run exam -- --list` | 列出作业 / 测验 |
 | `npm run exam -- --leaf <id>` | 导出题目为 markdown |
-| `npm run exam -- --leaf <id> --fill` | 按答案文件填涂（`--dry` 只填不提交） |
+| `npm run exam -- --leaf <id> --fill --api` | 接口直提（推荐） |
+| `npm run exam -- --all --api` | 批量交所有有答案的作业 |
 
 ### 参数
 

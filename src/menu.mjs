@@ -176,6 +176,7 @@ async function render() {
   console.log(`  ${color.cyan('[3]')} 课程管理${cfg.courses.length > 1 ? color.gray(`（${cfg.courses.length} 门）`) : ''}`);
   console.log(`  ${color.gray('[4]')} 环境诊断`);
   console.log(`  ${color.gray('[5]')} 打开日志文件夹`);
+  console.log(`  ${color.green('[6]')} 作业 / 测验`);
   console.log(`  ${color.gray('[0]')} 退出`);
   console.log('');
 
@@ -307,6 +308,57 @@ async function actLogs() {
   }
 }
 
+/* ───── 作业 / 测验 ───── */
+
+async function actExam() {
+  const course = getActiveCourse(loadConfig());
+  for (;;) {
+    clear();
+    console.log(color.bold('  作业 / 测验') + color.gray(`  ·  ${course?.name || ''}`));
+    console.log('');
+    console.log(`  ${color.green('[1]')} 列出所有作业`);
+    console.log(`  ${color.green('[2]')} 批量提交（已有答案的作业）`);
+    console.log(`  ${color.green('[3]')} 导出某份题目`);
+    console.log(`  ${color.gray('[0]')} 返回`);
+    console.log('');
+    if (lastMsg) {
+      console.log(`  ${lastMsg}`);
+      lastMsg = '';
+      console.log('');
+    }
+
+    const mode = (await ask(color.gray('  请选择 > '))).trim();
+    if (!mode || mode === '0') return;
+
+    if (mode === '1') {
+      clear();
+      await run('exam.mjs', ['--list']);
+      await ask(color.gray('\n  按回车返回 '));
+      continue;
+    }
+    if (mode === '2') {
+      clear();
+      await run('exam.mjs', ['--all', '--fill', '--api']);
+      console.log('');
+      await ask(color.gray('  按回车返回 '));
+      continue;
+    }
+    if (mode === '3') {
+      const id = (await ask(color.gray('  作业 ID（可先选 1 查看）> '))).trim();
+      if (!/^\d+$/.test(id)) continue;
+      clear();
+      await run('exam.mjs', ['--leaf', id]);
+      console.log('');
+      console.log(color.gray(`  题目已导出到 out/exam-${id}.md`));
+      console.log(color.gray(`  填好 out/answers-${id}.json 后，回到这里选 2 批量提交，或：`));
+      console.log(color.gray(`  npm run exam -- --leaf ${id} --fill --api`));
+      console.log('');
+      await ask(color.gray('  按回车返回 '));
+      continue;
+    }
+  }
+}
+
 /* ───── 入口 ───── */
 
 async function main() {
@@ -345,6 +397,9 @@ async function main() {
         break;
       case '5':
         await actLogs();
+        break;
+      case '6':
+        await actExam();
         break;
       default:
         break;

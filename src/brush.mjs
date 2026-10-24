@@ -36,6 +36,8 @@ const OPT = {
   noVerify: flag('no-verify'),
   verbose: flag('verbose'),
   quiet: flag('quiet'),
+  exam: flag('exam'),
+  onlyExam: flag('only-exam'),
   only: (val('only', '') || '').split(',').filter(Boolean).map(Number),
   course: val('course', null),
 };
@@ -191,6 +193,25 @@ if (!todo.length) {
   process.exit(0);
 }
 log.ok('plan ready', { count: todo.length });
+
+/* ═══════════════ 作业阶段（可单独跑） ═══════════════ */
+
+async function runExamStage({ dry = false } = {}) {
+  log.phase('exam');
+  console.log('');
+  console.log(color.bold('━━ 作业 / 测验 ━━'));
+  const { spawnSync } = await import('node:child_process');
+  const args = ['src/exam.mjs', '--all', '--fill', '--api'];
+  if (dry) args.push('--dry');
+  const r = spawnSync(process.execPath, args, { stdio: 'inherit', cwd: ROOT });
+  return r.status === 0;
+}
+
+if (OPT.onlyExam) {
+  await runExamStage({ dry: OPT.dry });
+  await log.flush();
+  process.exit(0);
+}
 
 /* ═══════════════ run ═══════════════ */
 
@@ -382,6 +403,12 @@ if (!OPT.noVerify && !OPT.dry) {
     console.log(warn(`${bad.length} 个节点未完成：`));
     for (const b of bad.slice(0, 15)) console.log(color.gray(`    ${b.vid}  ${b.name}  rate=${b.rate}`));
   }
+}
+
+/* ═══════════════ 作业阶段（视频跑完后接上） ═══════════════ */
+
+if (OPT.exam && !OPT.dry) {
+  await runExamStage();
 }
 
 /* ═══════════════ summary ═══════════════ */
