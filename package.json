@@ -30,7 +30,8 @@
     "doctor": "node src/doctor.mjs",
     "exam": "node src/exam.mjs",
     "llm": "node src/llm.mjs",
-    "llm-check": "node src/exam.mjs --llm-check"
+    "llm-check": "node src/exam.mjs --llm-check",
+    "ui": "node src/server.mjs"
   },
   "keywords": [
     "yuketang",

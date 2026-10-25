@@ -764,7 +764,7 @@ if (OPT.list || (!OPT.leaf && !OPT.all)) {
   }
   console.log('');
   console.log(color.gray('导出题目：npm run exam -- --leaf <ID>'));
-  console.log(color.gray('批量填涂：npm run exam -- --all --manual'));
+  console.log(color.gray('批量提交：npm run exam -- --all --fill --api'));
   console.log('');
   process.exit(0);
 }
