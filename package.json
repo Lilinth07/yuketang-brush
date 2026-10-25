@@ -1,6 +1,6 @@
 {
   "name": "yuketang-brush",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "雨课堂课程视频进度批处理工具：双击即用，扫码登录，自动抓取课程参数，实时进度，节点级日志",
   "type": "module",
   "license": "MIT",
