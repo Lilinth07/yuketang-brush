@@ -361,6 +361,42 @@ npm run exam -- --leaf 90000003 --auto     # 只生成答案，不提交
 | `npm run exam -- --all --api` | 批量交所有有答案的作业 |
 | `npm run llm` | 配置 AI（默认 DeepSeek） |
 | `npm run llm-check` | 测试模型连通性 |
+| `npm run ui` | 打开本地 Web 界面（`127.0.0.1:7788`） |
+| `npm run login` | 单独重登（`setup` 已内置，一般用不到） |
+
+### Web 界面
+
+不想记命令的话，浏览器里点就行：
+
+```bash
+npm run ui
+```
+
+然后打开 **http://127.0.0.1:7788**。只监听本机，不对外暴露。
+
+```
+雨课堂刷课器                                    [已登录]
+─────────────────────────────────────────────────────
+示例课程   视频 85 个 · 课程 10000001
+████████████████░░░░░░░░
+134/164 · 82%                       得分 100 · 未完成 31 项
+
+[刷视频] [视频+作业] [AI答题并提交] [提交已有答案]
+[作业列表] [复核完成度] [AI 连通测试] [停止]
+
+端点    https://api.deepseek.com/v1
+模型    deepseek-chat
+API Key [____________________] [保存]
+```
+
+能做的事：
+
+- 看课程进度（实时拉平台数据，不是缓存）
+- 一键触发刷视频 / 作业 / 复核，任务跑完自动解锁按钮
+- 实时日志（SSE 推流，等同 CLI 输出）
+- 填 AI 的端点、模型、Key，保存即写入 `config.local.json`
+
+界面**不重写任何业务逻辑**——它只是 `spawn` 现有脚本并转发 stdout，所以行为和命令行完全一致，改一处不会两边分叉。
 
 ### 参数
 
@@ -490,8 +526,12 @@ out/logs/brush-10000001-2026-10-23T21-23-42.jsonl   一行一条 JSON
 │   ├── logstat.mjs    日志分析
 │   ├── doctor.mjs     环境自检
 │   ├── verify.mjs     全量复核
-│   ├── exam.mjs       作业助手：解码 + 导出题目 + 填涂
+│   ├── exam.mjs       作业助手：解码 + 导出题目 + 接口提交
 │   ├── fontdec.mjs    考试字体解码（字形比对 + glyf 缓存）
+│   ├── answer.mjs     调用 OpenAI 兼容接口自动作答
+│   ├── llm.mjs        AI 配置向导（默认 DeepSeek）
+│   ├── server.mjs     本地 Web 服务（HTTP + SSE）
+│   ├── web/index.html Web 界面单页
 │   └── login.mjs      单独重登
 ├── docs/
 │   └── PROTOCOL.md    协议逆向记录
