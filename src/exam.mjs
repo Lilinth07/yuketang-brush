@@ -706,10 +706,15 @@ async function processOne(leafId, { auto, fill, dry, manual, waitMin }) {
         options: (p.content.Options || []).map((o) => ({ key: o.key, text: dec.decodeHtml(o.value || '').replace(/\n+/g, ' ') })),
       }));
       const { answers } = await llmAnswer(ex.meta.title, items, { ...loadLLMConfig(ROOT), log: (m) => console.log(info(m)) });
+      if (!Object.keys(answers).length) {
+        console.log(fail('模型没有返回任何可用答案'));
+        return { leaf: leafId, title: ex.meta.title, submitted: false, via: 'llm-empty' };
+      }
       fs.writeFileSync(ansFile, JSON.stringify({ ...answersTemplate(ex.data), ...answers }, null, 2), 'utf8');
       console.log(ok(`模型作答 ${Object.keys(answers).length} 题`));
     } catch (e) {
-      console.error(fail(e.message));
+      console.log(fail(`模型作答失败：${e.message}`));
+      return { leaf: leafId, title: ex.meta.title, submitted: false, via: 'llm-error' };
     }
   }
 
@@ -770,8 +775,8 @@ if (OPT.all) {
   const list = await listAssignments();
 
   if (OPT.auto) {
-    // 先确认 AI 可用，避免对每个作业各报一次错
-    const { loadLLMConfig } = await import('./answer.mjs');
+    // 先确认 AI 真的能用：没 key、key 错、模型名错，都在这里一次性暴露
+    const { loadLLMConfig, checkLLM } = await import('./answer.mjs');
     const llm = loadLLMConfig(ROOT);
     if (!llm.apiKey) {
       console.log('');
@@ -780,6 +785,18 @@ if (OPT.all) {
       process.exit(2);
     }
     console.log(color.gray(`  使用 ${llm.model} @ ${llm.baseUrl}`));
+    try {
+      const probe = await checkLLM(llm);
+      console.log(ok(`AI 就绪，${probe.ms}ms`));
+    } catch (e) {
+      console.log('');
+      console.log(fail(`AI 不可用：${e.message}`));
+      console.log(color.gray('  用 npm run llm 重新配置，或 npm run llm-check 单独排查'));
+      if (/deepseek-flash|404|model/i.test(e.message)) {
+        console.log(color.gray('  DeepSeek 官方可用模型：deepseek-chat / deepseek-reasoner'));
+      }
+      process.exit(2);
+    }
 
     // 模型答题：不需要预先有答案文件，全部作业都是候选，
     // 已完成的会在 processOne 里被跳过
