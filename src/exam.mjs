@@ -425,6 +425,108 @@ async function submitViaAPI(leafId, problems, answers, { delayMs = 4200 } = {}) 
   return { submitted: okN > 0, via: 'api', ok: okN, skipped: skipN, wrong };
 }
 
+/**
+ * 整卷一次提交：POST /mooc-api/v1/lms/exercise/problem_batch_apply/
+ *   {
+ *     classroom_id, exercise_id, leaf_id,
+ *     answer_dict: { "<problem_id>": ["A"], "<problem_id>": ["A","B"] }
+ *   }
+ * 响应 data 形如 { "<problem_id>": [结果或错误文本, code] }。
+ *
+ * 相比逐题 problem_apply，只发一个请求，不会被 429 打断。
+ */
+async function submitViaBatch(leafId, aid, problems, answers) {
+  const csrf = COOKIES.find((c) => c.name === 'csrftoken')?.value || '';
+  const answerDict = {};
+  let planned = 0;
+
+  for (let i = 0; i < problems.length; i++) {
+    const raw = String(answers[String(i + 1)] || '').trim().toUpperCase();
+    const letters = raw.split('').filter((c) => /[A-Z]/.test(c));
+    if (!letters.length) continue;
+    answerDict[String(problems[i].problem_id)] = { answer: letters };
+    planned++;
+  }
+
+  if (!planned) {
+    console.log(warn('答案文件是空的，跳过'));
+    return { submitted: false, via: 'empty' };
+  }
+
+  const url = `${ORIGIN}/mooc-api/v1/lms/exercise/problem_batch_apply/?classroom_id=${ROOM}&uv_id=2910&term=latest`;
+  const referer = `${ORIGIN}/ai-workspace/lms-graph/${ROOM}/exercise/${leafId}`;
+
+  console.log(info(`整卷提交：${planned} 题，1 个请求`));
+  const r = await postWithRetry(
+    url,
+    {
+      method: 'POST',
+      headers: { ...H, 'content-type': 'application/json', 'x-csrftoken': csrf, referer },
+      body: JSON.stringify({ classroom_id: ROOM, exercise_id: aid, leaf_id: Number(leafId), answer_dict: answerDict }),
+    },
+    { log: console.log },
+  );
+
+  if (!r) {
+    console.log(fail('提交请求失败'));
+    return { submitted: false, via: 'batch-error' };
+  }
+
+  let j = null;
+  try {
+    j = await r.json();
+  } catch {}
+
+  if (!j?.success) {
+    console.log(fail(`提交失败：${j?.msg || r.status}`));
+    return { submitted: false, via: 'batch-fail' };
+  }
+
+  const data = j.data || {};
+  let okN = 0;
+  let skipN = 0;
+  const wrong = [];
+
+  for (const [pid, val] of Object.entries(data)) {
+    const n = problems.findIndex((p) => String(p.problem_id) === String(pid));
+    const idx = n >= 0 ? n + 1 : '?';
+    if (Array.isArray(val) && typeof val[1] === 'number') {
+      const [res, code] = val;
+      if (code === 0 && res && typeof res === 'object') {
+        okN++;
+        const sc = res.my_score;
+        const right = res.is_right ?? res.is_correct;
+        const correct = Array.isArray(res.answer) ? res.answer.join('') : '';
+        if (right === false) wrong.push({ n: idx, correct });
+        console.log(
+          `${color.gray(`[${idx}]`)} ${right === false ? color.red(`✗ ${sc}分`) : color.green(`✓ ${sc}分`)}${
+            correct && right === false ? color.gray(`  正确答案 ${correct}`) : ''
+          }`,
+        );
+      } else {
+        skipN++;
+        console.log(`${color.gray(`[${idx}]`)} ${color.yellow(String(res).slice(0, 40))}`);
+      }
+    } else if (val && typeof val === 'object') {
+      okN++;
+      const sc = val.my_score;
+      const right = val.is_right ?? val.is_correct;
+      const correct = Array.isArray(val.answer) ? val.answer.join('') : '';
+      if (right === false) wrong.push({ n: idx, correct });
+      console.log(
+        `${color.gray(`[${idx}]`)} ${right === false ? color.red(`✗ ${sc}分`) : color.green(`✓ ${sc}分`)}${
+          correct && right === false ? color.gray(`  正确答案 ${correct}`) : ''
+        }`,
+      );
+    } else {
+      okN++;
+      console.log(`${color.gray(`[${idx}]`)} ${color.gray(String(JSON.stringify(val)).slice(0, 60))}`);
+    }
+  }
+
+  return { submitted: okN > 0, via: 'batch', ok: okN, skipped: skipN, wrong };
+}
+
 /* ═════════ 填涂 ═════════ */
 
 async function fillAnswers(page, leafId, answers, total, { dry, manual, waitMin }) {
@@ -628,7 +730,7 @@ async function processOne(leafId, { auto, fill, dry, manual, waitMin }) {
           }
           result = { submitted: false, via: 'dry' };
         } else {
-          result = await submitViaAPI(leafId, ex.data.problems, answers);
+          result = await submitViaBatch(leafId, ex.meta.aid, ex.data.problems, answers);
         }
       } else {
         result = await fillAnswers(page, leafId, answers, ex.data.problems.length, { dry, manual, waitMin });
