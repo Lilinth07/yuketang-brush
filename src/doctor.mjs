@@ -76,6 +76,7 @@ if (!fs.existsSync(COOKIE_FILE)) {
   try {
     const r = await fetch(`${origin}/api/v3/user/basic-info`, {
       headers: { cookie, xtbz: 'ykt', 'user-agent': 'Mozilla/5.0', accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
     });
     const j = await r.json();
     if (j.code === 0 && j.data?.id) {

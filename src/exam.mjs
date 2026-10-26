@@ -14,7 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { chromium } from 'playwright';
+import { launchProjectBrowser } from './browser.mjs';
 import { ROOT, OUT, CFG, resolveCourse, COOKIE_FILE } from './config.mjs';
 import { createDecoder, needsDecoding } from './fontdec.mjs';
 import { color, ok, fail, warn, info } from './ui.mjs';
@@ -832,13 +832,7 @@ let page = null;
 
 async function ensurePage() {
   if (page) return page;
-  browser = await chromium.launchPersistentContext(CFG.userDataDir, {
-    channel: CFG.channel,
-    headless: false,
-    viewport: null,
-    args: ['--disable-blink-features=AutomationControlled', '--start-maximized'],
-    ignoreDefaultArgs: ['--enable-automation'],
-  });
+  browser = await launchProjectBrowser();
   // 持久化上下文会恢复上次的标签页（常见表现：一启动就跳回课程页），
   // 这里只留一个空白页
   const pages = browser.pages();
@@ -889,4 +883,4 @@ if (results.length > 1) {
 
 await sleep(600);
 await closeBrowser();
-process.exit(0);
+process.exit(results.some((result) => result.error) ? 1 : 0);

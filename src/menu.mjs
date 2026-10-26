@@ -301,7 +301,10 @@ async function actDoctor() {
 async function actLogs() {
   const dir = fs.existsSync(LOGDIR) ? LOGDIR : OUT;
   try {
-    spawn('explorer', [dir], { detached: true, stdio: 'ignore' }).unref();
+    const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+    const child = spawn(opener, [dir], { detached: true, stdio: 'ignore' });
+    child.on('error', () => { lastMsg = color.yellow(`打开失败，手动去 ${dir}`); });
+    child.unref();
     lastMsg = color.green(`已打开 ${path.relative(ROOT, dir)}`);
   } catch {
     lastMsg = color.yellow(`打开失败，手动去 ${dir}`);
@@ -418,6 +421,7 @@ async function main() {
     if (ans === '0' || ans.toLowerCase() === 'q') {
       clear();
       console.log(color.gray('\n  再见\n'));
+      process.stdin.pause();
       return;
     }
 

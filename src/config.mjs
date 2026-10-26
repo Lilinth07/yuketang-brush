@@ -2,9 +2,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 export const ROOT = path.resolve(import.meta.dirname, '..');
-export const OUT = path.join(ROOT, 'out');
+export const DATA_DIR = process.env.YUKETANG_DATA_DIR || ROOT;
+export const OUT = path.join(DATA_DIR, 'out');
 export const LOGDIR = path.join(OUT, 'logs');
-export const CONFIG_FILE = path.join(ROOT, 'config.local.json');
+export const CONFIG_FILE = path.join(DATA_DIR, 'config.local.json');
 export const COOKIE_FILE = path.join(OUT, 'cookies.json');
 
 fs.mkdirSync(LOGDIR, { recursive: true });
@@ -13,10 +14,10 @@ export const CFG = {
   origin: process.env.SITE_ORIGIN || 'https://www.yuketang.cn',
 
   // 持久化登录态目录
-  userDataDir: process.env.PROFILE_DIR || path.join(ROOT, '.profile'),
+  userDataDir: process.env.PROFILE_DIR || path.join(DATA_DIR, '.profile'),
 
   // 真实浏览器通道：msedge / chrome
-  channel: process.env.BROWSER_CHANNEL || 'msedge',
+  channel: process.env.BROWSER_CHANNEL || (process.platform === 'darwin' ? 'chromium' : 'msedge'),
   headless: process.env.HEADLESS === '1',
 
   // 倍速（UI 路线用）
@@ -38,14 +39,14 @@ export const CFG = {
     '[class*="exam-modal"]',
   ],
 
-  answersFile: path.join(ROOT, 'answers.json'),
+  answersFile: path.join(DATA_DIR, 'answers.json'),
   pauseOnQuiz: process.env.PAUSE_ON_QUIZ !== '0',
   webhook: process.env.WEBHOOK || '',
 };
 
 /* ═════════ 本地配置（不入库） ═════════ */
 
-const EMPTY = { version: 1, profileDir: '.profile', channel: 'msedge', active: null, courses: [] };
+const EMPTY = { version: 1, profileDir: '.profile', channel: CFG.channel, active: null, courses: [] };
 
 export function loadConfig() {
   if (!fs.existsSync(CONFIG_FILE)) return { ...EMPTY };
@@ -63,7 +64,8 @@ export function loadConfig() {
 }
 
 export function saveConfig(cfg) {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2) + '\n', {encoding:'utf8',mode:0o600});
+  fs.chmodSync(CONFIG_FILE, 0o600);
   return CONFIG_FILE;
 }
 
@@ -123,6 +125,7 @@ export function parseCourseUrl(raw) {
     throw new Error('URL 格式不对，应形如 https://www.yuketang.cn/v2/web/studentLog/<classroom_id>?university_id=<id>&platform_id=3');
   }
   const m = u.pathname.match(/\/studentLog\/(\d+)/) || u.pathname.match(/\/(\d{5,})/);
+  if (u.protocol !== 'https:' || !(u.hostname === 'yuketang.cn' || u.hostname.endsWith('.yuketang.cn'))) throw new Error('请粘贴 https:// 开头的雨课堂课程链接（yuketang.cn 或其学校子站）');
   const q = u.searchParams;
   const classroomId = Number(q.get('classroom_id') || m?.[1] || 0);
   if (!classroomId) throw new Error('URL 里找不到 classroom_id');

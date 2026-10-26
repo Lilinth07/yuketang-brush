@@ -152,13 +152,22 @@ const PAGE_FN = async ({ b64, targets }) => {
   }
 
   // GB2312 常用字库
+  const probe = '雨课堂中文字体测试W@il0123';
+  const available = (family) => {
+    g.font = '32px monospace';
+    const baseline = g.measureText(probe).width;
+    g.font = `32px "${family}", monospace`;
+    return Math.abs(g.measureText(probe).width - baseline) > 0.1;
+  };
+  const family = ['SimHei', 'Heiti SC', 'STHeiti', 'PingFang SC', 'Arial Unicode MS'].find(available);
+  if (!family) throw new Error('找不到可用于中文字形比对的系统字体');
   const dec = new TextDecoder('gbk');
   const pool = [];
   for (let hi = 0xb0; hi <= 0xf7; hi++) {
     for (let lo = 0xa1; lo <= 0xfe; lo++) {
       const s = dec.decode(new Uint8Array([hi, lo]));
       if (s.length === 1 && s !== '\uFFFD') {
-        const r = norm(s, 'SimHei');
+        const r = norm(s, family);
         if (r.bmp && r.ink > 8) pool.push({ ch: s, bmp: r.bmp, ink: r.ink });
       }
     }
@@ -187,7 +196,7 @@ const PAGE_FN = async ({ b64, targets }) => {
     }
     result[gid] = best.ch;
   }
-  return { result, poolSize: pool.length };
+  return { result, poolSize: pool.length, family };
 };
 
 /* ───────── 对外接口 ───────── */
@@ -219,13 +228,14 @@ export async function createDecoder(page, fontBuffer, outDir, log = () => {}) {
     if (!page) throw new Error('字形缓存缺失，需要浏览器解码但没有可用页面');
     log(`需要识别 ${missing.length} 个字形…`);
     const t0 = Date.now();
-    const { result, poolSize } = await page.evaluate(PAGE_FN, {
+    const { result, poolSize, family } = await page.evaluate(PAGE_FN, {
       b64: fontBuffer.toString('base64'),
       targets: missing,
     });
     Object.assign(cache.map, result);
     saveCache(outDir, cache);
     log(`识别完成：${missing.length} 个字形 / 候选池 ${poolSize} / 用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    log(`使用系统字体 ${family}；字形相似度识别可能有误，提交前应复核导出的题目。`);
   } else {
     log(`字形映射已缓存（${Object.keys(cache.map).length} 条）`);
   }

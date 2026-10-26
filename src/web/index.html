@@ -39,6 +39,8 @@
   .course { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
   .course .name { font-size: 16px; font-weight: 600; }
   .course .meta { color: var(--dim); font-size: 12px; }
+  select { background:#12151b; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 8px; max-width:280px; }
+  #courseSelect { margin-left:auto; }
 
   .bar { height: 10px; background: #222735; border-radius: 6px; overflow: hidden; }
   .bar > i { display: block; height: 100%; background: linear-gradient(90deg,#3f7ff0,#38b26b); width: 0; transition: width .4s; }
@@ -75,6 +77,14 @@
   #log .dim { color: var(--dim); }
 
   .hint { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  .terminal-title { display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  .terminal-title strong { font-size:16px; }
+  #terminalState { color:var(--dim); font-size:12px; margin-right:auto; }
+  #terminalOutput { margin:12px 0; height:300px; overflow:auto; background:#090c11; border:1px solid var(--line); border-radius:8px; padding:14px; white-space:pre-wrap; overflow-wrap:anywhere; font:13px/1.7 Menlo,Monaco,monospace; color:#d8e4f5; }
+  .terminal-form { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  .terminal-form input[type=text], .terminal-form input[type=password] { min-width:180px; width:0; }
+  .terminal-form label { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--dim); }
+  #terminalNotice { color:var(--yellow); min-height:20px; font-size:12px; margin-top:6px; }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); margin-right: 6px; }
   .dot.busy { background: var(--yellow); animation: pulse 1s infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
@@ -93,6 +103,7 @@
     <div class="course">
       <span id="courseName" class="name">—</span>
       <span id="courseMeta" class="meta"></span>
+      <select id="courseSelect" aria-label="切换课程" hidden></select>
     </div>
     <div class="bar"><i id="bar"></i></div>
     <div class="barline">
@@ -100,6 +111,31 @@
       <span id="scoreText"></span>
     </div>
   </div>
+
+  <section class="card" id="serviceTerminal">
+    <div class="terminal-title">
+      <strong>服务终端</strong><span id="terminalState">连接中…</span>
+      <button class="primary" data-command="npm run setup">初始化课程</button>
+      <button data-command="npm run doctor">环境检查</button>
+      <button data-command="npm run login">重新登录</button>
+    </div>
+    <div class="hint">已准备好本项目的运行环境。运行命令后，提示与结果会显示在这里；需要你回答时，在下方输入回复。</div>
+    <pre id="terminalOutput" role="log" aria-label="服务终端输出" tabindex="0"></pre>
+    <form id="commandForm" class="terminal-form">
+      <span aria-hidden="true">$</span>
+      <input type="text" id="commandInput" aria-label="项目命令" value="npm run setup" placeholder="例如 npm run setup" autocomplete="off" spellcheck="false">
+      <button id="runCommand" class="primary" type="submit">运行命令</button>
+      <button id="terminalStop" class="danger" type="button" disabled>中断命令</button>
+      <button id="terminalClear" type="button">清屏</button>
+    </form>
+    <form id="replyForm" class="terminal-form">
+      <input type="text" id="replyInput" aria-label="回复命令提示" placeholder="命令运行后，在这里输入课程链接或回复" autocomplete="off" disabled>
+      <button id="sendReply" type="submit" disabled>发送 / 回车</button>
+      <label><input type="checkbox" id="hideReply"> 隐藏输入</label>
+    </form>
+    <div id="terminalNotice" role="status"></div>
+    <div class="hint">支持本服务的 npm run 命令及参数。按回车发送回复；不填内容直接发送，相当于按一次回车。扫码登录仍会打开专用浏览器。</div>
+  </section>
 
   <div class="card">
     <div class="actions">
@@ -113,7 +149,7 @@
       <button class="danger" id="stopBtn" disabled>停止</button>
     </div>
     <div class="hint">
-      导出某份题目用命令行：<code>npm run exam -- --leaf &lt;ID&gt;</code>
+      导出某份题目可在上方服务终端运行：<code>npm run exam -- --leaf &lt;ID&gt;</code>
     </div>
   </div>
 
@@ -144,6 +180,7 @@
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
 let busy = false;
+let taskRevision = 0;
 
 function addLog(line) {
   const d = document.createElement('div');
@@ -162,25 +199,36 @@ function setBusy(v, name) {
   busy = v;
   $('stopBtn').disabled = !v;
   document.querySelectorAll('button[data-task]').forEach((b) => (b.disabled = v));
+  document.querySelectorAll('button[data-command]').forEach((b) => (b.disabled = v));
+  $('runCommand').disabled = v;
+  $('commandInput').disabled = v;
+  $('terminalStop').disabled = !v;
+  $('replyInput').disabled = !v;
+  $('sendReply').disabled = !v;
+  $('courseSelect').disabled = v;
+  $('terminalState').textContent = v ? (name || '命令运行中') : '就绪';
   const badge = $('badge');
   if (v) {
     badge.className = 'badge';
-    badge.innerHTML = '<span class="dot busy"></span>' + (name || '执行中');
-  } else {
-    refresh();
+    badge.textContent = name || '执行中';
   }
 }
 
 async function refresh() {
+  const revision = taskRevision;
   try {
     const s = await (await fetch('/api/status')).json();
+    if (revision !== taskRevision) return;
     const badge = $('badge');
     badge.className = 'badge ' + (s.loggedIn ? 'on' : 'off');
-    badge.textContent = s.loggedIn ? '已登录' : '未登录';
+    badge.textContent = s.loggedIn ? '已保存登录信息' : '未登录';
 
     if (s.course) {
       $('courseName').textContent = s.course.name;
       $('courseMeta').textContent = `视频 ${s.course.videoCount || '?'} 个 · 课程 ${s.course.classroomId}`;
+    } else {
+      $('courseName').textContent = '尚未添加课程';
+      $('courseMeta').textContent = '在下方服务终端点击「初始化课程」开始';
     }
     if (s.stat) {
       const pct = s.stat.total ? (s.stat.done / s.stat.total) * 100 : 0;
@@ -188,14 +236,25 @@ async function refresh() {
       $('progressText').textContent = `${s.stat.done}/${s.stat.total} · ${pct.toFixed(0)}%`;
       $('scoreText').textContent = `得分 ${s.stat.score ?? '-'} · 未完成 ${s.stat.unfinished ?? '-'} 项`;
     } else {
-      $('progressText').textContent = '进度读取失败（登录态可能过期）';
+      $('progressText').textContent = s.course ? '进度读取失败（登录态可能过期）' : '初始化完成后，这里会显示课程进度';
     }
 
     if (!$('baseUrl').value) $('baseUrl').value = s.ai.baseUrl;
     if (!$('model').value) $('model').value = s.ai.model;
     if (!$('apiKey').value) $('apiKey').placeholder = s.ai.configured ? `已配置 · ${s.ai.model}` : 'sk-...';
 
-    if (s.running) setBusy(true, s.running.name);
+    setBusy(Boolean(s.running), s.running?.name);
+    const courses = await (await fetch('/api/courses')).json();
+    const select = $('courseSelect');
+    select.replaceChildren();
+    for (const course of courses.courses) {
+      const option = document.createElement('option');
+      option.value = course.classroomId;
+      option.textContent = course.name;
+      option.selected = Number(course.classroomId) === Number(courses.active ?? s.course?.classroomId);
+      select.appendChild(option);
+    }
+    select.hidden = courses.courses.length < 2;
   } catch (e) {
     $('badge').textContent = '连接失败';
   }
@@ -213,8 +272,57 @@ document.querySelectorAll('button[data-task]').forEach((btn) => {
   });
 });
 
+async function postJson(url, body) {
+  const response = await fetch(url, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
+  const result = await response.json();
+  if (!response.ok || result.ok === false) throw new Error(result.error || '操作失败，请重试');
+  return result;
+}
+function terminalWrite(text, replace = false) {
+  const el = $('terminalOutput');
+  el.textContent = (replace ? text : el.textContent + text).slice(-200000);
+  el.scrollTop = el.scrollHeight;
+}
+async function runCommand(command) {
+  taskRevision++;
+  $('terminalNotice').textContent = '';
+  setBusy(true, '正在启动命令…');
+  try { await postJson('/api/terminal/run', {command}); $('replyInput').focus(); }
+  catch (error) { $('terminalNotice').textContent = error.message; await refresh(); }
+}
+$('commandForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!busy) runCommand($('commandInput').value.trim());
+});
+document.querySelectorAll('[data-command]').forEach((button) => button.addEventListener('click', () => {
+  $('commandInput').value = button.dataset.command;
+  runCommand(button.dataset.command);
+}));
+$('replyForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const value = $('replyInput').value;
+  $('sendReply').disabled = true;
+  try {
+    await postJson('/api/terminal/input', {text:value});
+    $('replyInput').value = '';
+    $('terminalNotice').textContent = '回复已发送，请查看上方的新提示。';
+    $('replyInput').focus();
+  } catch (error) { $('terminalNotice').textContent = error.message; }
+  finally { $('sendReply').disabled = !busy; }
+});
+$('hideReply').addEventListener('change', () => { $('replyInput').type = $('hideReply').checked ? 'password' : 'text'; });
+$('terminalClear').addEventListener('click', () => { $('terminalOutput').textContent = ''; });
+$('courseSelect').addEventListener('change', async () => {
+  try { await postJson('/api/switch', {classroomId:$('courseSelect').value}); await refresh(); }
+  catch (error) { $('terminalNotice').textContent = error.message; }
+});
+$('terminalStop').addEventListener('click', async () => {
+  try { await postJson('/api/stop', {}); $('terminalNotice').textContent = '已请求中断命令。'; }
+  catch (error) { $('terminalNotice').textContent = error.message; }
+});
+
 $('stopBtn').addEventListener('click', async () => {
-  await fetch('/api/stop', { method: 'POST' });
+  await postJson('/api/stop', {});
   addLog('! 已请求停止');
 });
 
@@ -234,16 +342,22 @@ $('saveLlm').addEventListener('click', async () => {
 });
 
 const es = new EventSource('/events');
+es.addEventListener('terminal-snapshot', (event) => terminalWrite(JSON.parse(event.data).text, true));
+es.addEventListener('terminal', (event) => terminalWrite(JSON.parse(event.data).text));
+es.onerror = () => { $('terminalState').textContent = '正在重新连接…'; };
 es.addEventListener('start', (e) => {
+  taskRevision++;
   const d = JSON.parse(e.data);
   addLog('━━ ' + d.name + ' ━━');
   setBusy(true, d.name);
 });
 es.addEventListener('log', (e) => addLog(JSON.parse(e.data).line));
 es.addEventListener('done', (e) => {
+  taskRevision++;
   const d = JSON.parse(e.data);
-  addLog(d.code === 0 ? '✓ 任务结束' : `✗ 任务结束，退出码 ${d.code}`);
+  addLog(d.signal ? '任务已中断' : d.code === 0 ? '✓ 任务结束' : `✗ 任务结束，退出码 ${d.code}`);
   setBusy(false);
+  refresh();
 });
 
 addLog('界面已就绪');

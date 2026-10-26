@@ -17,7 +17,10 @@
     "docs",
     "启动.bat",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "macos",
+    "启动.command",
+    "打开网页.command"
   ],
   "scripts": {
     "menu": "node src/menu.mjs",
@@ -31,7 +34,9 @@
     "exam": "node src/exam.mjs",
     "llm": "node src/llm.mjs",
     "llm-check": "node src/exam.mjs --llm-check",
-    "ui": "node src/server.mjs"
+    "ui": "node src/server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "build:mac": "bash scripts/build-mac-app.sh"
   },
   "keywords": [
     "yuketang",

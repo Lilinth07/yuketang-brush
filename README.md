@@ -109,6 +109,14 @@
 
 之后每次双击，选 **1** 就能跑。
 
+### macOS：网页终端与菜单栏 App
+
+Mac 用户可双击 **`打开网页.command`**，首次自动准备独立 Node.js、依赖和专用浏览器。进入网页后，在「服务终端」点击「初始化课程」，按提示直接在网页回复课程链接，无需另外找终端。
+
+需要菜单栏书本图标、打开 App 自动启动和退出时关闭服务，可在安装 Xcode Command Line Tools 后运行 `npm run build:mac`，把生成的 `dist/雨课堂.app` 拖到「应用程序」。专用浏览器是 Playwright 的 Chrome for Testing；网页本身可以用 Safari 打开，不需要 Safari 自动化权限。
+
+详细环境、数据位置、构建和验证说明见 [docs/MACOS.md](docs/MACOS.md)。
+
 ### 多门课怎么办
 
 选 **[3] 课程管理**：

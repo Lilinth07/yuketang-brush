@@ -5,7 +5,7 @@
  * 首次使用建议直接跑 npm run setup（会把课程参数一起配好）。
  */
 import fs from 'node:fs';
-import { chromium } from 'playwright';
+import { launchProjectBrowser } from './browser.mjs';
 import { CFG, COOKIE_FILE, OUT } from './config.mjs';
 import { color, ok, fail, warn } from './ui.mjs';
 
@@ -15,13 +15,8 @@ console.log('');
 console.log(color.bold('雨课堂 登录'));
 console.log(color.gray('  在弹出的窗口里扫码，或输入账号密码。\n'));
 
-const ctx = await chromium.launchPersistentContext(CFG.userDataDir, {
-  channel: CFG.channel,
-  headless: false,
-  viewport: null,
-  args: ['--disable-blink-features=AutomationControlled', '--start-maximized'],
-  ignoreDefaultArgs: ['--enable-automation'],
-});
+let ctx;
+try { ctx = await launchProjectBrowser(); } catch (error) { console.log(fail(error.message)); process.exit(2); }
 
 const page = ctx.pages()[0] || (await ctx.newPage());
 await page.goto(`${CFG.origin}/web/?next=/v2/web/index`, { waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -64,8 +59,9 @@ if (me.code === 0 && me.uid) {
 }
 
 const cookies = await ctx.cookies();
-const keep = cookies.filter((c) => /yuketang\.cn$/.test(c.domain.replace(/^\./, '')));
-fs.writeFileSync(COOKIE_FILE, JSON.stringify(keep, null, 2));
+const keep = cookies.filter((c) => /(^|\.)yuketang\.cn$/.test(c.domain.replace(/^\./, '')));
+fs.writeFileSync(COOKIE_FILE, JSON.stringify(keep, null, 2), {mode:0o600});
+fs.chmodSync(COOKIE_FILE, 0o600);
 console.log(ok(`${keep.length} 条 cookie 已保存`));
 
 await page.waitForTimeout(1500);
