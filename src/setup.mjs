@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
-import { chromium } from 'playwright';
+import { launchProjectBrowser } from './browser.mjs';
 import {
   ROOT, OUT, COOKIE_FILE, CONFIG_FILE,
   CFG, loadConfig, saveConfig, parseCourseUrl,
@@ -60,15 +60,10 @@ try {
 say(ok(`classroom_id = ${parsed.classroomId}  university_id = ${parsed.universityId || '?'}  platform_id = ${parsed.platformId}`));
 
 say('\n' + step(1, TOTAL, '启动浏览器'));
-const ctx = await chromium.launchPersistentContext(CFG.userDataDir, {
-  channel: CFG.channel,
-  headless: false,
-  viewport: null,
-  args: ['--disable-blink-features=AutomationControlled', '--start-maximized', '--autoplay-policy=no-user-gesture-required'],
-  ignoreDefaultArgs: ['--enable-automation'],
-});
+let ctx;
+try { ctx = await launchProjectBrowser(); } catch (error) { say(fail(error.message)); process.exit(2); }
 const page = ctx.pages()[0] || (await ctx.newPage());
-say(ok('浏览器已启动（窗口标题带「个人」的那个）'));
+say(ok('专用浏览器已启动，请在该窗口中扫码登录'));
 
 /* ═════════ 登录 ═════════ */
 
@@ -294,8 +289,9 @@ if (hb.length) {
 } else {
   say(warn('没抓到心跳报文。可能是这节已学完不触发播放。'));
   say(color.gray('  可以先手动在窗口里点开任意一节视频播几秒，然后回到这里按回车。'));
-  await playPage.close();
   await ask('按回车继续（或 Ctrl+C 退出）');
+  await playPage.waitForTimeout(1000);
+  if (hb.length) { found.cc = hb[0].cc; found.lmsUserId = found.lmsUserId || hb[0].u; }
 }
 await playPage.close().catch(() => {});
 
@@ -310,7 +306,8 @@ if (!found.cc) {
 say('\n' + step(5, TOTAL, '保存配置'));
 
 const cookies = await ctx.cookies();
-fs.writeFileSync(COOKIE_FILE, JSON.stringify(cookies.filter((c) => /yuketang\.cn$/.test(c.domain.replace(/^\./, ''))), null, 2));
+fs.writeFileSync(COOKIE_FILE, JSON.stringify(cookies.filter((c) => /(^|\.)yuketang\.cn$/.test(c.domain.replace(/^\./, ''))), null, 2), {mode:0o600});
+fs.chmodSync(COOKIE_FILE, 0o600);
 
 const cfg = loadConfig();
 const entry = {

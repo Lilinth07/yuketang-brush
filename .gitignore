@@ -19,3 +19,9 @@ npm-debug.log*
 Thumbs.db
 .idea/
 .vscode/
+
+# macOS 构建产物与输入配置
+dist/
+*.app/
+*.iconset/
+answers.json

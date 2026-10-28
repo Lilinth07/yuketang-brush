@@ -18,7 +18,7 @@ export const DEFAULT_LLM = {
 };
 
 export function loadLLMConfig(rootDir) {
-  const cfgFile = path.join(rootDir, 'config.local.json');
+  const cfgFile = path.join(process.env.YUKETANG_DATA_DIR || rootDir, 'config.local.json');
   let local = {};
   try {
     local = JSON.parse(fs.readFileSync(cfgFile, 'utf8')).llm || {};
