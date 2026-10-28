@@ -80,6 +80,16 @@ try {
     service.kill('SIGTERM');
     await new Promise(resolve=>service.once('exit',resolve));
   }
-  assert.equal(service.exitCode,0);
+  // Windows 没有真正的 SIGTERM：child.kill 会直接 TerminateProcess，
+  // 子进程 exitCode 是 1（或被信号杀死时为 null）。
+  // macOS / Linux 上服务能捕获 SIGTERM 并 process.exit(0)，所以仍严格断言。
+  if (process.platform === 'win32') {
+    assert.ok(
+      service.exitCode === 0 || service.exitCode === 1 || service.exitCode === null,
+      `unexpected exitCode on win32: ${service.exitCode}`,
+    );
+  } else {
+    assert.equal(service.exitCode,0);
+  }
   fs.rmSync(data,{recursive:true,force:true});
 }
