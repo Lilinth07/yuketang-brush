@@ -211,7 +211,7 @@ async function actCourses() {
     }
 
     console.log('');
-    console.log(`  ${color.green('[a]')} 添加新课程`);
+    console.log(`  ${color.green('[a]')} 扫描 / 刷新课程`);
     if (cfg.courses.length) console.log(`  ${color.yellow('[d]')} 删除课程`);
     console.log(`  ${color.gray('[0]')} 返回`);
     console.log('');

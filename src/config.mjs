@@ -71,7 +71,7 @@ export function saveConfig(cfg) {
 
 export function hasConfig() {
   const c = loadConfig();
-  return c.courses.some((x) => x.courseId && x.cc && x.lmsUserId);
+  return c.courses.some((x) => x.courseId && x.lmsUserId);
 }
 
 /** 当前选中的课程：active 命中就用它，否则退回第一门 */
@@ -148,7 +148,7 @@ export function resolveCourse({ course, url } = {}) {
   const cfg = loadConfig();
   const list = cfg.courses || [];
 
-  const need = ['courseId', 'skuId', 'sign', 'lmsUserId', 'cc', 'classroomId'];
+  const need = ['courseId', 'skuId', 'sign', 'lmsUserId', 'classroomId'];
 
   if (url || (course && /^https?:/i.test(course))) {
     const target = url || course;

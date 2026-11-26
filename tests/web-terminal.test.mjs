@@ -49,18 +49,16 @@ try {
     }
   })().catch(()=>{});
   await until(()=>transcript.includes('服务终端已就绪'));
-  assert.equal((await post('/api/terminal/run',{command:'npm run setup'})).status,200);
-  await until(()=>transcript.includes('课程 URL >'));
-  assert.equal((await post('/api/terminal/run',{command:'npm run doctor'})).status,409);
-  await post('/api/terminal/input',{text:'not-a-url'});
+  assert.equal((await post('/api/terminal/run',{command:'npm run setup -- --url "not-a-url"'})).status,200);
   await until(()=>closedCount===1);
   assert.ok(transcript.includes('URL 格式不对'));
-  await post('/api/terminal/run',{command:'npm run menu'});
+  assert.equal((await post('/api/terminal/run',{command:'npm run menu'})).status,200);
   await until(()=>transcript.includes('请选择 >'));
+  assert.equal((await post('/api/terminal/run',{command:'npm run doctor'})).status,409);
   await post('/api/terminal/input',{text:'0'});
   await until(()=>closedCount===2);
   assert.ok(transcript.includes('再见'));
-  await post('/api/terminal/run',{command:'npm run setup'});
+  assert.equal((await post('/api/terminal/run',{command:'npm run menu'})).status,200);
   await post('/api/stop',{});
   await until(()=>closedCount===3);
   assert.equal((await post('/api/terminal/run',{command:'bash -c echo nope'})).status,400);

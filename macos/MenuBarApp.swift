@@ -3,6 +3,14 @@ import Darwin
 
 let smokeTest = CommandLine.arguments.contains("--smoke-test")
 let serviceURL = URL(string: "http://127.0.0.1:7788")!
+let browserProbeURL = URL(string: "https://example.com/")!
+let browserPreference = "webBrowserIdentifier"
+
+struct BrowserOption {
+    let identifier: String
+    let name: String
+    let url: URL
+}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
@@ -16,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var ready = false
     var attempts = 0
     let fm = FileManager.default
+    let preferences = UserDefaults.standard
     let data: URL = {
         if let path = Bundle.main.object(forInfoDictionaryKey: "YuketangDataDirectory") as? String, !path.isEmpty {
             return URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
@@ -27,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !smokeTest, let identifier = Bundle.main.bundleIdentifier,
            NSRunningApplication.runningApplications(withBundleIdentifier: identifier).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
-            NSWorkspace.shared.open(serviceURL)
+            openInPreferredBrowser(serviceURL)
             NSApp.terminate(nil)
             return
         }
@@ -40,7 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(stateItem)
         menu.addItem(.separator())
         add(menu, "打开网页", #selector(openPage), "o")
-        add(menu, "初始化 / 添加课程…", #selector(setupCourse))
+        add(menu, "扫描 / 刷新课程…", #selector(setupCourse))
+        add(menu, "设置…", #selector(openSettings), ",")
         add(menu, "打开数据文件夹", #selector(openData))
         add(menu, "查看服务日志", #selector(openLog))
         menu.addItem(.separator())
@@ -62,8 +72,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func environment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = project.appendingPathComponent(".runtime/node/bin").path + ":/usr/bin:/bin:/usr/sbin:/sbin"
-        env["PLAYWRIGHT_BROWSERS_PATH"] = project.appendingPathComponent(".runtime/browsers").path
-        env["BROWSER_CHANNEL"] = "chromium"
+        env["YUKETANG_BROWSER"] = "auto"
+        for (id, channel, executable) in [
+            ("com.google.Chrome", "chrome", "Google Chrome"),
+            ("com.microsoft.edgemac", "msedge", "Microsoft Edge")
+        ] {
+            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { continue }
+            let binary = app.appendingPathComponent("Contents/MacOS").appendingPathComponent(executable)
+            if fm.isExecutableFile(atPath: binary.path) {
+                env["BROWSER_CHANNEL"] = channel
+                env["YUKETANG_BROWSER_EXECUTABLE"] = binary.path
+                break
+            }
+        }
         env["YUKETANG_DATA_DIR"] = data.path
         env["YUKETANG_APP_MANAGED"] = "1"
         env["UI_PORT"] = "7788"
@@ -127,6 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if smokeTest {
                         print("APP_READY pid=\(process.processIdentifier) data=\(self.data.path)")
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
+                    } else if self.preferences.object(forKey: browserPreference) == nil {
+                        NSWorkspace.shared.open(serviceURL, configuration: NSWorkspace.OpenConfiguration()) { _, _ in
+                            DispatchQueue.main.async { self.showBrowserSettings(firstLaunch: true) }
+                        }
                     } else { self.openPage() }
                 } else if self.attempts > 30 {
                     self.timer?.invalidate()
@@ -165,13 +190,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    @objc func openPage() { if ready { NSWorkspace.shared.open(serviceURL) } }
+    func installedBrowsers() -> [BrowserOption] {
+        var identifiers: Set<String> = []
+        return NSWorkspace.shared.urlsForApplications(toOpen: browserProbeURL).compactMap { url in
+            guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier,
+                  identifiers.insert(id).inserted else { return nil }
+            let name = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+                ?? url.deletingPathExtension().lastPathComponent
+            return BrowserOption(identifier: id, name: name, url: url)
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func openInPreferredBrowser(_ url: URL) {
+        let preference = preferences.string(forKey: browserPreference)
+        guard let preference, !preference.isEmpty,
+              let browser = installedBrowsers().first(where: { $0.identifier == preference }) else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        NSWorkspace.shared.open([url], withApplicationAt: browser.url,
+                                configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if error != nil { DispatchQueue.main.async { _ = NSWorkspace.shared.open(url) } }
+        }
+    }
+
+    func showBrowserSettings(firstLaunch: Bool = false) {
+        guard !quitting else { return }
+        let browsers = installedBrowsers()
+        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 26), pullsDown: false)
+        let defaultName = NSWorkspace.shared.urlForApplication(toOpen: serviceURL).flatMap { Bundle(url: $0) }
+            .flatMap { $0.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? $0.object(forInfoDictionaryKey: "CFBundleName") as? String }
+        picker.addItem(withTitle: defaultName.map { "系统默认浏览器（\($0)）" } ?? "系统默认浏览器")
+        for browser in browsers { picker.addItem(withTitle: browser.name) }
+        if let saved = preferences.string(forKey: browserPreference),
+           let index = browsers.firstIndex(where: { $0.identifier == saved }) {
+            picker.selectItem(at: index + 1)
+        }
+
+        let alert = NSAlert()
+        alert.messageText = firstLaunch ? "选择网页浏览器" : "雨课堂设置"
+        alert.informativeText = "用于打开本地雨课堂网页。扫码登录与扫描课程会使用已安装的 EgoLite、Chrome 或 Edge。"
+        alert.accessoryView = picker
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: firstLaunch ? "稍后设置" : "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            let index = picker.indexOfSelectedItem
+            preferences.set(index > 0 ? browsers[index - 1].identifier : "", forKey: browserPreference)
+        }
+    }
+
+    @objc func openSettings() { showBrowserSettings() }
+    @objc func openPage() { if ready { openInPreferredBrowser(serviceURL) } }
     @objc func openData() { NSWorkspace.shared.open(data) }
     @objc func openLog() { NSWorkspace.shared.open(data.appendingPathComponent("服务日志.log")) }
     @objc func restart() { stop(); start() }
     @objc func quit() { NSApp.terminate(nil) }
     @objc func setupCourse() {
-        if ready { NSWorkspace.shared.open(URL(string: "http://127.0.0.1:7788/#serviceTerminal")!) }
+        if ready { openInPreferredBrowser(URL(string: "http://127.0.0.1:7788/#courses")!) }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { openPage(); return false }
