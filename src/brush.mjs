@@ -42,6 +42,15 @@ const OPT = {
   course: val('course', null),
 };
 
+if (!Number.isSafeInteger(OPT.maxEvents) || OPT.maxEvents < 1 ||
+    !Number.isFinite(OPT.step) || OPT.step <= 0 ||
+    !Number.isFinite(OPT.tsStep) || OPT.tsStep <= 0 ||
+    !Number.isSafeInteger(OPT.margin) || OPT.margin < 0 ||
+    !Number.isSafeInteger(OPT.retryRound) || OPT.retryRound < 0) {
+  console.error(fail('确认 --step 和 --ts-step 为正数，--max-events 为正整数，--margin 和 --retry 为非负整数'));
+  process.exit(2);
+}
+
 /* ═══════════════ 课程 ═══════════════ */
 
 let course;
@@ -232,6 +241,20 @@ async function probeDuration(vid) {
   return { dur: p?.video_length || 0, p };
 }
 
+async function postBatches(vid, count, buildEvent) {
+  for (let first = 1; first <= count; first += OPT.maxEvents) {
+    const size = Math.min(OPT.maxEvents, count - first + 1);
+    const events = Array.from({ length: size }, (_, index) => buildEvent(first + index));
+    const r = await postEvents(vid, events);
+    stat.posted++;
+    stat.events += events.length;
+    log.node('lesson:post', { vid, first, events: size, status: r.status, ms: r.ms });
+    if (r.status < 200 || r.status >= 300) {
+      throw new Error(`进度上报失败（HTTP ${r.status}，第 ${first} 条起）`);
+    }
+  }
+}
+
 async function brushOne(leaf) {
   const vid = leaf.leaf_id;
   const t0 = Date.now();
@@ -260,22 +283,19 @@ async function brushOne(leaf) {
     }
   }
 
-  const need = Math.min(OPT.maxEvents, Math.ceil(dur / OPT.step) + OPT.margin);
-  const start = Date.now();
-  const events = [];
-  for (let k = 1; k <= need; k++) {
-    events.push(makeEvent(vid, Math.min(k * OPT.step, dur - 0.5), 200 + k, start + k * OPT.tsStep));
-  }
+  const need = Math.ceil(dur / OPT.step) + OPT.margin;
+  const batches = Math.ceil(need / OPT.maxEvents);
 
   if (OPT.dry) {
-    log.ok('lesson:dry', { vid, dur, events: need });
-    return { result: 'dry', meta: `${fmtDur(dur)} · 计划 ${need} 条` };
+    log.ok('lesson:dry', { vid, dur, events: need, batches });
+    return { result: 'dry', meta: `${fmtDur(dur)} · 计划 ${need} 条 / ${batches} 批` };
   }
 
-  const r = await postEvents(vid, events);
-  stat.posted++;
-  stat.events += events.length;
-  log.node('lesson:post', { vid, events: need, status: r.status, ms: r.ms });
+  const start = Date.now();
+  const endPoint = Math.max(0, dur - 0.5);
+  await postBatches(vid, need, (k) =>
+    makeEvent(vid, Math.min(k * OPT.step, endPoint), 200 + k, start + k * OPT.tsStep),
+  );
 
   await sleep(2000);
   const p1 = await getProgress(vid);
@@ -286,15 +306,18 @@ async function brushOne(leaf) {
     return { result: 'ok', meta: `${fmtDur(dur)} · ${need} 条` };
   }
 
-  log.warn('lesson:retry', { vid, rate: p1?.rate });
-  const t2 = Date.now();
-  const again = [];
-  for (let k = 1; k <= OPT.retryRound; k++) {
-    again.push(makeEvent(vid, Math.min(dur - 0.3, k * 3), 600 + k, t2 + k * OPT.tsStep));
+  if (!OPT.retryRound) {
+    log.error('lesson:fail', { vid, watch: p1?.watch_length, rate: p1?.rate });
+    return { result: 'fail', meta: justify(p1?.watch_length, p1?.video_length) };
   }
-  await postEvents(vid, again);
-  stat.posted++;
-  stat.events += again.length;
+
+  log.warn('lesson:retry', { vid, rate: p1?.rate });
+  const retryStart = Math.max(Date.now(), start + need * OPT.tsStep);
+  const retryEndPoint = Math.max(0, dur - 0.3);
+  const retryFrom = Math.max(0, retryEndPoint - OPT.retryRound * 3);
+  await postBatches(vid, OPT.retryRound, (k) =>
+    makeEvent(vid, Math.min(retryFrom + k * 3, retryEndPoint), 200 + need + k, retryStart + k * OPT.tsStep),
+  );
   await sleep(2000);
   const p2 = await getProgress(vid);
   log.node('lesson:verify2', { vid, watch: p2?.watch_length, rate: p2?.rate, completed: p2?.completed });

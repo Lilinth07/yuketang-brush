@@ -17,7 +17,7 @@ const HOST = '127.0.0.1';
 
 const clients = new Set();
 let running = null; // { name, child, startedAt }
-let terminalText = '服务终端已就绪。可以输入 npm run setup，或点击「初始化课程」。\n';
+let terminalText = '服务终端已就绪。可以输入 npm run setup，或点击「扫描课程」。\n';
 let outputSequence = 0;
 const appendTerminal = (text) => {
   terminalText = (terminalText + text).slice(-200000);

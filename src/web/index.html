@@ -99,11 +99,12 @@
     <span id="badge" class="badge">加载中…</span>
   </header>
 
-  <div class="card">
+  <div class="card" id="courses">
     <div class="course">
       <span id="courseName" class="name">—</span>
       <span id="courseMeta" class="meta"></span>
       <select id="courseSelect" aria-label="切换课程" hidden></select>
+      <button class="primary" data-command="npm run setup">扫描课程</button>
     </div>
     <div class="bar"><i id="bar"></i></div>
     <div class="barline">
@@ -115,7 +116,6 @@
   <section class="card" id="serviceTerminal">
     <div class="terminal-title">
       <strong>服务终端</strong><span id="terminalState">连接中…</span>
-      <button class="primary" data-command="npm run setup">初始化课程</button>
       <button data-command="npm run doctor">环境检查</button>
       <button data-command="npm run login">重新登录</button>
     </div>
@@ -129,12 +129,12 @@
       <button id="terminalClear" type="button">清屏</button>
     </form>
     <form id="replyForm" class="terminal-form">
-      <input type="text" id="replyInput" aria-label="回复命令提示" placeholder="命令运行后，在这里输入课程链接或回复" autocomplete="off" disabled>
+      <input type="text" id="replyInput" aria-label="回复命令提示" placeholder="命令提示需要回复时，在这里输入" autocomplete="off" disabled>
       <button id="sendReply" type="submit" disabled>发送 / 回车</button>
       <label><input type="checkbox" id="hideReply"> 隐藏输入</label>
     </form>
     <div id="terminalNotice" role="status"></div>
-    <div class="hint">支持本服务的 npm run 命令及参数。按回车发送回复；不填内容直接发送，相当于按一次回车。扫码登录仍会打开专用浏览器。</div>
+    <div class="hint">支持本服务的 npm run 命令及参数。按回车发送回复；不填内容直接发送，相当于按一次回车。扫码登录会打开本机支持的登录浏览器。</div>
   </section>
 
   <div class="card">
@@ -228,7 +228,7 @@ async function refresh() {
       $('courseMeta').textContent = `视频 ${s.course.videoCount || '?'} 个 · 课程 ${s.course.classroomId}`;
     } else {
       $('courseName').textContent = '尚未添加课程';
-      $('courseMeta').textContent = '在下方服务终端点击「初始化课程」开始';
+      $('courseMeta').textContent = '点击「扫描课程」开始';
     }
     if (s.stat) {
       const pct = s.stat.total ? (s.stat.done / s.stat.total) * 100 : 0;
@@ -236,7 +236,7 @@ async function refresh() {
       $('progressText').textContent = `${s.stat.done}/${s.stat.total} · ${pct.toFixed(0)}%`;
       $('scoreText').textContent = `得分 ${s.stat.score ?? '-'} · 未完成 ${s.stat.unfinished ?? '-'} 项`;
     } else {
-      $('progressText').textContent = s.course ? '进度读取失败（登录态可能过期）' : '初始化完成后，这里会显示课程进度';
+      $('progressText').textContent = s.course ? '进度读取失败（登录态可能过期）' : '扫描并选取课程后，这里会显示课程进度';
     }
 
     if (!$('baseUrl').value) $('baseUrl').value = s.ai.baseUrl;
@@ -247,14 +247,14 @@ async function refresh() {
     const courses = await (await fetch('/api/courses')).json();
     const select = $('courseSelect');
     select.replaceChildren();
-    for (const course of courses.courses) {
+    for (const [index, course] of courses.courses.entries()) {
       const option = document.createElement('option');
       option.value = course.classroomId;
-      option.textContent = course.name;
+      option.textContent = `${index + 1}. ${course.name}`;
       option.selected = Number(course.classroomId) === Number(courses.active ?? s.course?.classroomId);
       select.appendChild(option);
     }
-    select.hidden = courses.courses.length < 2;
+    select.hidden = courses.courses.length === 0;
   } catch (e) {
     $('badge').textContent = '连接失败';
   }
@@ -301,6 +301,11 @@ document.querySelectorAll('[data-command]').forEach((button) => button.addEventL
 $('replyForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const value = $('replyInput').value;
+  if (!busy || $('sendReply').disabled) return;
+  if (/^\s*npm\s+run(?:\s|$)/.test(value)) {
+    $('terminalNotice').textContent = '命令请填在上方命令框。等当前任务结束后再运行。';
+    return;
+  }
   $('sendReply').disabled = true;
   try {
     await postJson('/api/terminal/input', {text:value});
@@ -314,7 +319,7 @@ $('hideReply').addEventListener('change', () => { $('replyInput').type = $('hide
 $('terminalClear').addEventListener('click', () => { $('terminalOutput').textContent = ''; });
 $('courseSelect').addEventListener('change', async () => {
   try { await postJson('/api/switch', {classroomId:$('courseSelect').value}); await refresh(); }
-  catch (error) { $('terminalNotice').textContent = error.message; }
+  catch (error) { $('terminalNotice').textContent = error.message; await refresh(); }
 });
 $('terminalStop').addEventListener('click', async () => {
   try { await postJson('/api/stop', {}); $('terminalNotice').textContent = '已请求中断命令。'; }

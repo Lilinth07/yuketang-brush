@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { launchProjectBrowser } from './browser.mjs';
+import { useEgoLite } from './ego-browser.mjs';
 import { ROOT, OUT, CFG, resolveCourse, COOKIE_FILE } from './config.mjs';
 import { createDecoder, needsDecoding } from './fontdec.mjs';
 import { color, ok, fail, warn, info } from './ui.mjs';
@@ -737,6 +738,12 @@ async function processOne(leafId, { auto, fill, dry, manual, waitMin }) {
         } else {
           result = await submitViaBatch(leafId, ex.meta.aid, ex.data.problems, answers);
         }
+      } else if (useEgoLite) {
+        const exercisePage = await ensurePage();
+        await exercisePage.goto(`${ORIGIN}/ai-workspace/lms-graph/${ROOM}/exercise/${leafId}?is_chapter=1`);
+        exercisePage.keep();
+        console.log(info('已在 EgoLite 打开作业页面，请在网页中自行作答及提交。'));
+        result = { submitted: false, via: 'egolite-manual' };
       } else {
         result = await fillAnswers(page, leafId, answers, ex.data.problems.length, { dry, manual, waitMin });
       }
@@ -847,6 +854,11 @@ async function closeBrowser() {
   await browser.close().catch(() => {});
   browser = null;
   page = null;
+}
+
+if (useEgoLite && OPT.fill && !OPT.api && tasks.length > 1) {
+  console.log(fail('EgoLite 手动作答请使用 --leaf 指定一份作业。'));
+  process.exit(2);
 }
 
 const results = [];

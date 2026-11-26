@@ -5,6 +5,9 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { macLoginBrowser } from './browser.mjs';
+import { egoExecutable, useEgoLite } from './ego-browser.mjs';
 import { ROOT, OUT, COOKIE_FILE, CONFIG_FILE, CFG, loadConfig } from './config.mjs';
 import { color, ok, fail, warn, info } from './ui.mjs';
 
@@ -16,37 +19,47 @@ const [major, minor] = process.versions.node.split('.').map(Number);
 if (major > 20 || (major === 20 && minor >= 11)) add('ok', 'Node.js', `v${process.versions.node}`);
 else add('fail', 'Node.js', `v${process.versions.node}`, '需要 >= 20.11，去 nodejs.org 装 LTS');
 
-/* 2. playwright */
-let pw = null;
-try {
-  pw = await import('playwright');
-  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules/playwright/package.json'), 'utf8'));
-  add('ok', 'playwright', `v${pkg.version}`);
-} catch {
-  add('fail', 'playwright', '未安装', '运行 npm install');
-}
-
-/* 3. 浏览器通道 */
-if (pw) {
-  const want = CFG.channel;
-  let found = false;
+if (useEgoLite) {
+  const result = spawnSync(egoExecutable(), ['--version'], { stdio: 'ignore', timeout: 5000 });
+  if (result.status === 0) add('ok', '浏览器', 'EgoLite');
+  else add('fail', '浏览器', 'EgoLite 命令不可用', '打开 EgoLite 并完成首次设置');
+} else if (process.platform === 'darwin') {
+  const browser = macLoginBrowser();
+  if (browser) add('ok', '登录浏览器', browser.channel === 'chrome' ? 'Google Chrome' : 'Microsoft Edge');
+  else add('fail', '登录浏览器', '未找到 EgoLite、Chrome 或 Edge', '任选一个安装后重试');
+} else {
+  /* 2. playwright */
+  let pw = null;
   try {
-    const exe = pw.chromium.executablePath();
-    found = Boolean(exe && fs.existsSync(exe));
-  } catch {}
-  const known = [
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    '/usr/bin/google-chrome',
-    '/usr/bin/microsoft-edge',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  ].filter((p) => fs.existsSync(p));
+    pw = await import('playwright');
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules/playwright/package.json'), 'utf8'));
+    add('ok', 'playwright', `v${pkg.version}`);
+  } catch {
+    add('fail', 'playwright', '未安装', '运行 npm install');
+  }
 
-  if (known.length) add('ok', '浏览器', `${known.length} 个可用：${known.map((p) => path.basename(p)).join(', ')}`);
-  else if (found) add('ok', '浏览器', 'playwright 自带 chromium');
-  else add('fail', '浏览器', `没找到 ${want}`, '装 Edge 或 Chrome，或运行 npx playwright install chromium');
+  /* 3. 浏览器通道 */
+  if (pw) {
+    const want = CFG.channel;
+    let found = false;
+    try {
+      const exe = pw.chromium.executablePath();
+      found = Boolean(exe && fs.existsSync(exe));
+    } catch {}
+    const known = [
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      '/usr/bin/google-chrome',
+      '/usr/bin/microsoft-edge',
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    ].filter((p) => fs.existsSync(p));
+
+    if (known.length) add('ok', '浏览器', `${known.length} 个可用：${known.map((p) => path.basename(p)).join(', ')}`);
+    else if (found) add('ok', '浏览器', 'playwright 自带 chromium');
+    else add('fail', '浏览器', `没找到 ${want}`, '装 Edge 或 Chrome，或运行 npx playwright install chromium');
+  }
 }
 
 /* 4. 配置 */
@@ -55,7 +68,7 @@ if (!cfg.courses.length) {
   add('fail', '配置', 'config.local.json 不存在或没有课程', '运行 npm run setup');
 } else {
   const c = cfg.courses[0];
-  const need = ['classroomId', 'courseId', 'skuId', 'sign', 'lmsUserId', 'cc'];
+  const need = ['classroomId', 'courseId', 'skuId', 'sign', 'lmsUserId'];
   const miss = need.filter((k) => !c[k]);
   if (miss.length) add('fail', '配置', `${cfg.courses.length} 门课，第一门缺 ${miss.join(', ')}`, `运行 npm run setup -- --url "${c.url || ''}"`);
   else

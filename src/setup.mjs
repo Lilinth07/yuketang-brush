@@ -1,354 +1,211 @@
 #!/usr/bin/env node
-/**
- * 首次使用引导：登录 → 输入课程 URL → 自动发现参数 → 落盘配置
- *
- *   npm run setup
- *   npm run setup -- --url "https://www.yuketang.cn/v2/web/studentLog/10000001?university_id=2910&platform_id=3"
- *
- * 会自动发现：
- *   classroomId / universityId / platformId  ← URL
- *   sign / courseId                          ← 课程接口
- *   skuId / lmsUserId                        ← leaf_info
- *   cc（设备指纹）                            ← 播放页心跳
- */
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { launchProjectBrowser } from './browser.mjs';
-import {
-  ROOT, OUT, COOKIE_FILE, CONFIG_FILE,
-  CFG, loadConfig, saveConfig, parseCourseUrl,
-} from './config.mjs';
-import { color, ok, fail, warn, info, step } from './ui.mjs';
+import { loginPrompt, useEgoLite } from './ego-browser.mjs';
+import { CFG, COOKIE_FILE, OUT, loadConfig, parseCourseUrl, saveConfig } from './config.mjs';
+import { color, ok, fail, info } from './ui.mjs';
 
-const argv = process.argv.slice(2);
-const argUrl = (() => {
-  const i = argv.indexOf('--url');
-  return i >= 0 ? argv[i + 1] : null;
-})();
-
-const TOTAL = 5;
-const say = (s) => console.log(s);
-
-function ask(q) {
+function ask(prompt) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return rl.question(q).finally(() => rl.close());
+  return rl.question(prompt).finally(() => rl.close());
 }
 
-/* ═════════ 启动浏览器 ═════════ */
-
-say(color.bold('\n雨课堂刷课器 · 初始化向导\n'));
-
-let targetUrl = argUrl;
-if (!targetUrl) {
-  say(info('在浏览器里打开你要刷的课程页面，地址栏整条复制过来'));
-  say(color.gray('  形如 https://www.yuketang.cn/v2/web/studentLog/10000001?university_id=2910&platform_id=3\n'));
-  targetUrl = (await ask('课程 URL > ')).trim();
-}
-if (!targetUrl) {
-  say(fail('没有输入 URL，退出'));
-  process.exit(1);
-}
-
-let parsed;
-try {
-  parsed = parseCourseUrl(targetUrl);
-} catch (e) {
-  say(fail(e.message));
-  process.exit(1);
-}
-say(ok(`classroom_id = ${parsed.classroomId}  university_id = ${parsed.universityId || '?'}  platform_id = ${parsed.platformId}`));
-
-say('\n' + step(1, TOTAL, '启动浏览器'));
-let ctx;
-try { ctx = await launchProjectBrowser(); } catch (error) { say(fail(error.message)); process.exit(2); }
-const page = ctx.pages()[0] || (await ctx.newPage());
-say(ok('专用浏览器已启动，请在该窗口中扫码登录'));
-
-/* ═════════ 登录 ═════════ */
-
-async function isLoggedIn() {
-  const r = await page
-    .evaluate(async () => {
-      try {
-        const res = await fetch('/api/v3/user/basic-info', { credentials: 'include' });
-        const j = await res.json();
-        return { code: j.code, uid: j.data?.id || null, name: j.data?.name || '' };
-      } catch {
-        return { code: -1 };
-      }
-    })
-    .catch(() => ({ code: -1 }));
-  return r;
+function fromListing(item, origin) {
+  const classroomId = Number(item.classroom_id);
+  if (!Number.isSafeInteger(classroomId) || classroomId <= 0) return null;
+  const universityId = Number(item.course?.university_id) || null;
+  const url = new URL(`/v2/web/studentLog/${classroomId}`, origin);
+  if (universityId) url.searchParams.set('university_id', universityId);
+  url.searchParams.set('platform_id', '3');
+  url.searchParams.set('classroom_id', classroomId);
+  return {
+    classroomId, universityId, origin, url: url.href,
+    name: item.course?.name || item.name || `课程 ${classroomId}`,
+    className: item.name,
+    courseId: item.course?.id,
+    university: item.course?.university_name,
+    term: item.term,
+    role: item.role,
+    teacher: item.teacher,
+  };
 }
 
-say('\n' + step(2, TOTAL, '检查登录态'));
-await page.goto(parsed.normalized, { waitUntil: 'domcontentloaded' }).catch(() => {});
-await page.waitForTimeout(5000);
+async function getJSON(page, endpoint) {
+  return page.evaluate(async (url) => {
+    const response = await fetch(url, { headers: { xtbz: 'ykt' }, credentials: 'same-origin' });
+    return response.ok ? response.json() : null;
+  }, endpoint);
+}
 
-let me = await isLoggedIn();
-if (me.code === 0 && me.uid) {
-  say(ok(`已登录：${me.name} (${me.uid})`));
-} else {
-  say(warn('未登录。请在弹出的浏览器窗口里扫码或输入账号密码。'));
-  say(color.gray('  微信扫码 / 雨课堂 App 扫码 / 学号密码，任选一种。首次使用需先关注服务号。\n'));
-  const deadline = Date.now() + 15 * 60 * 1000;
-  let tick = 0;
+async function checkLogin(ctx, page, origin) {
+  await page.goto(`${origin}/v2/web/index`, { waitUntil: 'domcontentloaded' });
+  const who = async () => {
+    const result = await getJSON(page, '/api/v3/user/basic-info').catch(() => null);
+    return result?.code === 0 && result.data?.id ? result.data : null;
+  };
+  let account = await who();
+  if (account) return account;
+
+  if (useEgoLite) {
+    await ctx.handOff();
+    console.log(info(loginPrompt));
+    await ask('按回车继续 > ');
+    await ctx.resume();
+  } else {
+    console.log(info('请在浏览器登录，最多等待 15 分钟。'));
+  }
+  const deadline = Date.now() + (useEgoLite ? 15000 : 15 * 60 * 1000);
   while (Date.now() < deadline) {
-    await page.waitForTimeout(2000);
-    me = await isLoggedIn();
-    if (me.code === 0 && me.uid) break;
-    if (++tick % 15 === 0) process.stdout.write(color.gray('.'));
+    account = await who();
+    if (account) return account;
+    await page.waitForTimeout(1200);
   }
-  process.stdout.write('\n');
-  if (me.code !== 0 || !me.uid) {
-    say(fail('15 分钟内未检测到登录，退出'));
-    await ctx.close();
-    process.exit(2);
-  }
-  say(ok(`登录成功：${me.name} (${me.uid})`));
+  throw new Error('还没有检测到雨课堂登录，请登录后再同步课程。');
 }
-
-/* ═════════ 发现参数 ═════════ */
-
-say('\n' + step(3, TOTAL, '读取课程结构'));
-
-const found = { sign: null, cid: null, uv: parsed.universityId, skuId: null, lmsUserId: null, cc: null, courseName: null, chapters: 0 };
-
-// 3.1 从页面请求里截 sign（最准）
-// 注意：chapter 请求参数里的 cid 其实是 classroom_id，真正的 course_id 在响应体里
-page.on('request', (r) => {
-  const u = r.url();
-  if (!u.includes('/lms/learn/course/chapter')) return;
-  try {
-    const q = new URL(u).searchParams;
-    found.sign = q.get('sign') || found.sign;
-    found.uv = Number(q.get('uv_id')) || found.uv;
-  } catch {}
-});
-
-await page.goto(parsed.normalized, { waitUntil: 'domcontentloaded' }).catch(() => {});
-await page.waitForTimeout(12000);
-
-// 3.2 兜底：课程基础信息里带 course_sign / course_id
-if (!found.sign || !found.cid) {
-  try {
-    const r = await page.evaluate(async (room) => {
-      const res = await fetch(`/c27/online_courseware/course/classroom/${room}/get_basic_info/?classroom_id=${room}`, {
-        credentials: 'include',
-        headers: { xtbz: 'ykt' },
-      });
-      return await res.json();
-    }, parsed.classroomId);
-    const d = r?.data || {};
-    found.sign = found.sign || d.course_sign;
-    found.cid = found.cid || d.course_id;
-    found.courseName = d.course_name || d.name;
-  } catch {}
-}
-
-if (!found.sign) {
-  say(fail('拿不到 sign，页面结构可能变了'));
-  await ctx.close();
-  process.exit(3);
-}
-
-// 3.3 拉章节树（注意：这个接口的 cid 参数实际要传 classroom_id）
-const chapter = await page
-  .evaluate(
-    async ({ cid, sign, uv, room }) => {
-      const res = await fetch(
-        `/mooc-api/v1/lms/learn/course/chapter?cid=${cid}&sign=${sign}&term=latest&uv_id=${uv}&classroom_id=${room}`,
-        { credentials: 'include', headers: { xtbz: 'ykt' } },
-      );
-      return await res.json();
-    },
-    { cid: parsed.classroomId, sign: found.sign, uv: found.uv, room: parsed.classroomId },
-  )
-  .catch(() => null);
 
 const TYPE = { 0: '视频', 1: '图文', 2: '讨论', 3: '作业', 4: '考试' };
-const leaves = [];
-for (const sec of chapter?.data?.course_chapter || []) {
-  for (const s of sec.section_leaf_list || []) {
-    for (const l of s.leaf_list || []) {
-      leaves.push({
-        section: sec.name || '',
-        leaf_id: l.id,
-        chapter_id: l.chapter_id,
-        section_id: l.section_id,
-        name: l.name,
-        leaf_type: l.leaf_type,
-        type_name: TYPE[l.leaf_type] ?? `type-${l.leaf_type}`,
-        is_show: l.is_show,
-        is_locked: l.is_locked,
-      });
+
+async function fetchChapter(page, course) {
+  const { classroomId } = course;
+  const basic = (await getJSON(page,
+    `/c27/online_courseware/course/classroom/${classroomId}/get_basic_info/?classroom_id=${classroomId}`))?.data;
+  const sign = basic?.course_sign || course.sign;
+  const universityId = basic?.university_id || course.universityId;
+  if (!sign) throw new Error('平台没有返回这门课的目录参数，请确认该课程仍可访问。');
+
+  const query = new URLSearchParams({
+    cid: classroomId, sign, term: 'latest', uv_id: universityId ?? '', classroom_id: classroomId,
+  });
+  const data = (await getJSON(page, '/mooc-api/v1/lms/learn/course/chapter?' + query))?.data;
+  if (!Array.isArray(data?.course_chapter)) throw new Error('平台没有返回章节目录，已有目录已保留。');
+  const courseId = data.course_id || basic?.course_id || course.courseId;
+  if (!courseId) throw new Error('平台没有返回课程编号，已有目录已保留。');
+
+  const leaves = data.course_chapter.flatMap((chapter) =>
+    (chapter.section_leaf_list || []).flatMap((section) =>
+      (section.leaf_list || []).map((leaf) => ({
+        section: chapter.name || '',
+        leaf_id: leaf.id,
+        chapter_id: leaf.chapter_id,
+        section_id: leaf.section_id,
+        name: leaf.name,
+        leaf_type: leaf.leaf_type,
+        type_name: TYPE[leaf.leaf_type] ?? `type-${leaf.leaf_type}`,
+        is_show: leaf.is_show,
+        is_locked: leaf.is_locked,
+      })),
+    ),
+  );
+  const videos = leaves.filter((leaf) => leaf.leaf_type === 0);
+  const representative = videos.find((leaf) => leaf.is_locked !== true) || leaves[0];
+  const leafInfo = representative
+    ? (await getJSON(page, `/mooc-api/v1/lms/learn/leaf_info/${classroomId}/${representative.leaf_id}/?classroom_id=${classroomId}`)
+      .catch(() => null))?.data
+    : null;
+  const leafStats = {};
+  for (const leaf of leaves) {
+    leafStats[leaf.type_name] = (leafStats[leaf.type_name] || 0) + 1;
+  }
+  return {
+    leaves,
+    course: {
+      ...course,
+      name: basic?.course_name || data.course_name || course.name,
+      courseId, sign, universityId,
+      platformId: basic?.platform_id || course.platformId || 3,
+      skuId: leafInfo?.sku_id || course.skuId || null,
+      lmsUserId: leafInfo?.user_id || course.lmsUserId || null,
+      videoCount: videos.length,
+      leafCount: leaves.length,
+      leafStats,
+      leafTypes: Object.keys(leafStats),
+      syncedAt: new Date().toISOString(),
+    },
+  };
+}
+
+async function run() {
+  const urlIndex = process.argv.indexOf('--url');
+  const courseIndex = process.argv.indexOf('--course');
+  if (urlIndex >= 0 && courseIndex >= 0) throw new Error('请选择一种课程定位方式。');
+  const parsed = urlIndex < 0 ? null : parseCourseUrl(process.argv[urlIndex + 1] || '');
+  const ordinal = courseIndex < 0 ? null : (process.argv[courseIndex + 1] || '').normalize('NFKC');
+  if (ordinal !== null && !/^[1-9]\d*$/.test(ordinal)) {
+    throw new Error('--course 后请输入正整数，例如 --course 2。');
+  }
+  const origin = parsed?.origin || CFG.origin;
+  const cfg = loadConfig();
+  console.log(color.bold('\n雨课堂 · 扫描课程目录\n'));
+  const ctx = await launchProjectBrowser();
+  try {
+    const page = ctx.pages()[0] || await ctx.newPage();
+    const account = await checkLogin(ctx, page, origin);
+    if (cfg.account?.id && String(cfg.account.id) !== String(account.id)) {
+      throw new Error('EgoLite 当前登录的账号与此数据目录的账号不同。请切回原账号再同步。');
     }
+    const existing = new Map(cfg.courses.map((course) => [Number(course.classroomId), course]));
+    let selected;
+    if (parsed) {
+      selected = { ...existing.get(parsed.classroomId), ...parsed, url: parsed.normalized };
+    } else {
+      const response = await getJSON(page, '/v2/api/web/courses/list?identity=2');
+      if (response?.errcode !== 0 || !Array.isArray(response.data?.list)) {
+        throw new Error('读取课程列表失败，已有课程已保留。');
+      }
+      const listed = new Map();
+      for (const item of response.data.list) {
+        const summary = fromListing(item, origin);
+        if (!summary) continue;
+        const old = existing.get(summary.classroomId);
+        const defined = Object.fromEntries(Object.entries(summary).filter(([, value]) => value != null));
+        listed.set(summary.classroomId, { ...old, ...defined });
+      }
+      if (!listed.size) throw new Error('这个账号的课表为空，已有课程已保留。');
+
+      // Preserve the numbering in the saved list and append newly discovered courses.
+      cfg.courses = [
+        ...cfg.courses.map((item) => listed.get(Number(item.classroomId)) || item),
+        ...[...listed.values()].filter((item) => !existing.has(item.classroomId)),
+      ];
+      const current = cfg.courses.find((item) => Number(item.classroomId) === Number(cfg.active));
+      selected = ordinal === null ? current || cfg.courses[0] : cfg.courses[Number(ordinal) - 1];
+      if (!selected) {
+        throw new Error(`没有第 ${ordinal} 门课。当前共有 ${cfg.courses.length} 门，请在网页的课程下拉框里选择。`);
+      }
+      console.log(ok(`已扫描到 ${listed.size} 门课程，正在读取「${selected.name}」的章节目录。`));
+    }
+
+    const { course, leaves } = await fetchChapter(page, selected);
+    const leafCache = path.join(OUT, `leaves-${course.classroomId}.json`);
+    if (!leaves.length && selected.leafCount > 0 && fs.existsSync(leafCache)) {
+      throw new Error('平台返回了空目录，已有章节缓存已保留。');
+    }
+    const cookies = await ctx.cookies(origin);
+    const scoped = cookies.filter((cookie) => /(^|\.)yuketang\.cn$/.test(cookie.domain));
+    if (!scoped.length) throw new Error('没有读取到可用的雨课堂登录态，已有配置已保留。');
+
+    cfg.courses = cfg.courses.some(({ classroomId }) => Number(classroomId) === course.classroomId)
+      ? cfg.courses.map((item) => Number(item.classroomId) === course.classroomId ? course : item)
+      : [...cfg.courses, course];
+    cfg.active = course.classroomId;
+    cfg.channel = useEgoLite ? 'ego' : CFG.channel;
+    cfg.account = { ...cfg.account, id: account.id, name: account.name, school: account.school, at: new Date().toISOString() };
+
+    fs.writeFileSync(leafCache, JSON.stringify(leaves, null, 2));
+    fs.writeFileSync(COOKIE_FILE, JSON.stringify(scoped, null, 2), { mode: 0o600 });
+    fs.chmodSync(COOKIE_FILE, 0o600);
+    saveConfig(cfg);
+    console.log(ok(`「${course.name}」已设为当前课程，共 ${leaves.length} 个节点，其中 ${course.videoCount} 个视频。`));
+  } finally {
+    await ctx.close().catch(() => {});
   }
 }
-found.courseName = found.courseName || chapter?.data?.course_name || '';
-found.chapters = leaves.length;
 
-// course_id 的权威来源：章节接口响应体（不是请求参数）
-if (chapter?.data?.course_id) found.cid = chapter.data.course_id;
-
-if (!found.cid) {
-  say(fail('拿不到 course_id'));
-  await ctx.close();
-  process.exit(3);
+try {
+  await run();
+} catch (error) {
+  console.error(fail(error.message));
+  process.exitCode = 1;
 }
-say(ok(`sign = ${found.sign}   course_id = ${found.cid}   uv_id = ${found.uv}`));
-
-const videos = leaves.filter((l) => l.leaf_type === 0);
-if (!videos.length) {
-  say(fail('这门课里没有视频节点'));
-  await ctx.close();
-  process.exit(4);
-}
-say(ok(`课程「${found.courseName}」共 ${leaves.length} 个节点，其中视频 ${videos.length} 个`));
-
-fs.mkdirSync(OUT, { recursive: true });
-const leafCache = path.join(OUT, `leaves-${parsed.classroomId}.json`);
-fs.writeFileSync(leafCache, JSON.stringify(leaves, null, 2));
-say(color.gray(`  章节树缓存 → ${path.relative(ROOT, leafCache)}`));
-
-// 3.4 leaf_info 拿 sku_id / lms user_id
-const firstVideo = videos[0];
-const info1 = await page
-  .evaluate(
-    async ({ room, vid }) => {
-      const res = await fetch(`/mooc-api/v1/lms/learn/leaf_info/${room}/${vid}/?classroom_id=${room}`, {
-        credentials: 'include',
-        headers: { xtbz: 'ykt' },
-      });
-      return await res.json();
-    },
-    { room: parsed.classroomId, vid: firstVideo.leaf_id },
-  )
-  .catch(() => null);
-found.skuId = info1?.data?.sku_id || null;
-found.lmsUserId = info1?.data?.user_id || null;
-
-/* ═════════ 抓设备指纹 cc ═════════ */
-
-say('\n' + step(4, TOTAL, '抓取设备指纹（打开一节视频，让它播放 10 秒）'));
-
-const hb = [];
-const onReq = (r) => {
-  if (!r.url().includes('/video-log/heartbeat/')) return;
-  const body = r.postData();
-  if (!body) return;
-  try {
-    const j = JSON.parse(body);
-    for (const e of j.heart_data || []) {
-      if (e?.cc) hb.push({ cc: e.cc, u: e.u, v: e.v });
-    }
-  } catch {}
-};
-page.on('request', onReq);
-
-const playUrl = `${parsed.origin}/ai-workspace/lms-graph/${parsed.classroomId}/video/${firstVideo.leaf_id}?is_chapter=1`;
-const playPage = await ctx.newPage();
-playPage.on('request', onReq);
-await playPage.goto(playUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-await playPage.waitForTimeout(8000);
-
-await playPage
-  .evaluate(async () => {
-    for (const v of document.querySelectorAll('video')) {
-      v.muted = true;
-      try {
-        await v.play();
-      } catch {}
-    }
-  })
-  .catch(() => {});
-
-const ccDeadline = Date.now() + 30000;
-while (Date.now() < ccDeadline && !hb.length) {
-  await playPage.waitForTimeout(1500);
-  await playPage
-    .evaluate(async () => {
-      for (const v of document.querySelectorAll('video')) {
-        if (v.paused) {
-          v.muted = true;
-          try {
-            await v.play();
-          } catch {}
-        }
-      }
-    })
-    .catch(() => {});
-}
-
-if (hb.length) {
-  found.cc = hb[0].cc;
-  found.lmsUserId = found.lmsUserId || hb[0].u;
-  say(ok(`cc = ${found.cc}`));
-  say(ok(`lms user_id = ${found.lmsUserId}`));
-} else {
-  say(warn('没抓到心跳报文。可能是这节已学完不触发播放。'));
-  say(color.gray('  可以先手动在窗口里点开任意一节视频播几秒，然后回到这里按回车。'));
-  await ask('按回车继续（或 Ctrl+C 退出）');
-  await playPage.waitForTimeout(1000);
-  if (hb.length) { found.cc = hb[0].cc; found.lmsUserId = found.lmsUserId || hb[0].u; }
-}
-await playPage.close().catch(() => {});
-
-if (!found.cc) {
-  say(warn('cc 仍为空。可以手动填写：在浏览器 F12 → Network 里找 video-log/heartbeat/ 的请求体 heart_data[0].cc'));
-  const manual = (await ask('cc（直接回车跳过）> ')).trim();
-  if (manual) found.cc = manual;
-}
-
-/* ═════════ 落盘 ═════════ */
-
-say('\n' + step(5, TOTAL, '保存配置'));
-
-const cookies = await ctx.cookies();
-fs.writeFileSync(COOKIE_FILE, JSON.stringify(cookies.filter((c) => /(^|\.)yuketang\.cn$/.test(c.domain.replace(/^\./, ''))), null, 2), {mode:0o600});
-fs.chmodSync(COOKIE_FILE, 0o600);
-
-const cfg = loadConfig();
-const entry = {
-  name: found.courseName || `classroom-${parsed.classroomId}`,
-  url: parsed.normalized,
-  origin: parsed.origin,
-  classroomId: parsed.classroomId,
-  universityId: found.uv || parsed.universityId,
-  platformId: parsed.platformId,
-  courseId: found.cid,
-  skuId: found.skuId,
-  sign: found.sign,
-  lmsUserId: found.lmsUserId,
-  cc: found.cc,
-  videoCount: videos.length,
-  discoveredAt: new Date().toISOString(),
-};
-
-const idx = cfg.courses.findIndex((c) => Number(c.classroomId) === entry.classroomId);
-const isNew = idx < 0;
-cfg.courses = isNew ? [...cfg.courses, entry] : cfg.courses.map((c, i) => (i === idx ? { ...c, ...entry } : c));
-
-// 关键：把刚配置的这门课设为「当前课程」，否则菜单和 brush 仍会用旧课程
-cfg.active = entry.classroomId;
-cfg.profileDir = path.relative(ROOT, CFG.userDataDir) || '.profile';
-cfg.channel = CFG.channel;
-saveConfig(cfg);
-
-await ctx.close();
-
-say('\n' + color.green('━━ 初始化完成 ━━'));
-say(`  课程      ${entry.name}`);
-say(`  节点      视频 ${entry.videoCount} 个 / 共 ${found.chapters} 个`);
-say(`  状态      ${color.green('已设为当前课程')}`);
-say(`  登录态    ${cookies.length} 条 cookie`);
-say(`  配置      ${path.relative(ROOT, CONFIG_FILE)}`);
-say(`  账号      ${me.name} (${me.uid})`);
-say('');
-say(color.bold('下一步：'));
-say(`  npm run dry      ${color.gray('# 先看计划，不发请求')}`);
-say(`  npm run brush    ${color.gray('# 正式执行')}`);
-say('');
-say(color.gray('  配置和登录态都在 .gitignore 里，不会被提交。'));
-say('');

@@ -20,14 +20,7 @@ if [[ ! -x "$NODE" ]]; then
   mkdir -p "$ROOT/.runtime/node"
   tar -xzf "$TEMP/$ARCHIVE" --strip-components=1 -C "$ROOT/.runtime/node"
 fi
-export PATH="$ROOT/.runtime/node/bin:$PATH"
-export PLAYWRIGHT_BROWSERS_PATH="$ROOT/.runtime/browsers"
-export BROWSER_CHANNEL=chromium
-cd "$ROOT"
-if [[ ! -f node_modules/playwright/package.json ]]; then
-  npm ci --ignore-scripts --no-audit --no-fund
-fi
-if ! "$NODE" --input-type=module -e 'import fs from "node:fs"; import {chromium} from "playwright"; process.exit(fs.existsSync(chromium.executablePath()) ? 0 : 1);'; then
-  echo '正在安装独立浏览器（Chrome for Testing，不会替换系统浏览器）…'
-  "$NODE" node_modules/playwright/cli.js install chromium --no-shell
+
+if [[ ! -f "$ROOT/node_modules/playwright/package.json" || ! -f "$ROOT/node_modules/playwright-core/package.json" ]]; then
+  (cd "$ROOT" && PATH="$ROOT/.runtime/node/bin:$PATH" npm ci --omit=optional --ignore-scripts --no-audit --no-fund)
 fi
